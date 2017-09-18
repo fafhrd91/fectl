@@ -16,7 +16,7 @@ use ctx::prelude::*;
 use config::Config;
 use event::{Reason, ServiceStatus};
 use process::ProcessError;
-use service::{Service, StartStatus, ReloadStatus, ServiceOperationError};
+use service::{FeService, StartStatus, ReloadStatus, ServiceOperationError};
 
 #[derive(Debug)]
 /// Command center errors
@@ -49,10 +49,9 @@ enum Command {
 pub struct CommandCenter {
     cfg: Rc<Config>,
     state: State,
-    handle: reactor::Handle,
     stop: Option<unsync::oneshot::Sender<bool>>,
     tx: unsync::mpsc::UnboundedSender<Command>,
-    services: HashMap<String, Rc<RefCell<Service>>>,
+    services: HashMap<String, Rc<RefCell<FeService>>>,
     stop_waiters: Vec<unsync::oneshot::Sender<bool>>,
 }
 
@@ -65,7 +64,6 @@ impl CommandCenter {
         let cmd = CommandCenter {
             cfg: cfg,
             state: State::Starting,
-            handle: handle.clone(),
             stop: Some(stop),
             tx: cmd_tx,
             services: HashMap::new(),
@@ -249,80 +247,80 @@ struct CommandCenterCommands;
 
 impl CommandCenterCommands {
 
-    fn init_signals(&self, srv: &mut CtxService<Self>) {
-        let handle = srv.handle().clone();
+    fn init_signals(&self, ctx: &mut Context<Self>) {
+        let handle = ctx.handle().clone();
 
         // SIGHUP
-        srv.add_fut_stream(
+        ctx.add_fut_stream(
             Box::new(
                 Signal::new(libc::SIGHUP, &handle)
                     .map(|sig| Box::new(sig.map(|_| {
                         info!("SIGHUP received, reloading");
                         Command::Reload}).map_err(|_| ()))
-                         as Box<CtxServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenterCommands>>)
                     .map_err(|_| ()))
         );
 
         // SIGTERM
-        srv.add_fut_stream(
+        ctx.add_fut_stream(
             Box::new(
                 Signal::new(libc::SIGTERM, &handle)
                     .map(|sig| Box::new(sig.map(|_| {
                         info!("SIGTERM received, stopping");
                         Command::Stop}).map_err(|_| ()))
-                         as Box<CtxServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenterCommands>>)
                     .map_err(|_| ()))
         );
 
         // SIGINT
-        srv.add_fut_stream(
+        ctx.add_fut_stream(
             Box::new(
                 tokio_signal::ctrl_c(&handle)
                     .map(|sig| Box::new(sig.map(|_| {
                         info!("SIGINT received, exiting");
                         Command::Quit}).map_err(|_| ()))
-                         as Box<CtxServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenterCommands>>)
                     .map_err(|_| ()))
         );
 
         // SIGQUIT
-        srv.add_fut_stream(
+        ctx.add_fut_stream(
             Box::new(
                 Signal::new(libc::SIGQUIT, &handle)
                     .map(|sig| Box::new(sig.map(|_| {
                         info!("SIGQUIT received, exiting");
                         Command::Quit}).map_err(|_| ()))
-                         as Box<CtxServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenterCommands>>)
                     .map_err(|_| ()))
         );
 
         // SIGCHLD
-        srv.add_fut_stream(
+        ctx.add_fut_stream(
             Box::new(
                 Signal::new(libc::SIGCHLD, &handle)
                     .map(|sig| Box::new(sig.map(|_| {
                         debug!("SIGCHLD received");
                         Command::ReapWorkers}).map_err(|_| ()))
-                         as Box<CtxServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenterCommands>>)
                     .map_err(|_| ()))
         );
     }
     
-    fn stop(&self, ctx: &mut CommandCenter, srv: &mut CtxService<Self>, graceful: bool)
+    fn stop(&self, st: &mut CommandCenter, ctx: &mut Context<Self>, graceful: bool)
     {
-        if ctx.state != State::Stopping {
+        if st.state != State::Stopping {
             info!("Stopping service");
 
-            ctx.state = State::Stopping;
+            st.state = State::Stopping;
             let mut waiting = false;
-            for service in ctx.services.values() {
+            for service in st.services.values() {
                 match service.borrow_mut().stop(graceful, Reason::Exit) {
                     Ok(rx) => {
                         waiting = true;
-                        srv.spawn(
-                            rx.wrap().then(|_, _: &mut _, srv: &mut CtxService<CommandCenterCommands>| {
+                        ctx.spawn(
+                            rx.wrap().then(|_, _: &mut _, ctx: &mut Context<CommandCenterCommands>| {
                                 // check if all services are stopped
-                                let s = srv.as_mut();
+                                let s = ctx.as_mut();
                                 for srv in s.services.values() {
                                     if !srv.borrow().is_stopped() {
                                         return fut::ok(())
@@ -336,50 +334,49 @@ impl CommandCenterCommands {
                 }
             }
             if !waiting {
-                ctx.exit(true);
+                st.exit(true);
             }
         }
     }
 }
 
-impl CtxContext for CommandCenterCommands {
+impl Service for CommandCenterCommands {
 
     type State = CommandCenter;
     type Message = Result<Command, ()>;
     type Result = Result<(), ()>;
 
-    fn start(&mut self, ctx: &mut CommandCenter, srv: &mut CtxService<Self>)
+    fn start(&mut self, st: &mut CommandCenter, ctx: &mut Context<Self>)
     {
         info!("Starting ctl service: {}", getpid());
-        self.init_signals(srv);
+        self.init_signals(ctx);
 
         // start services
-        for cfg in ctx.cfg.services.iter() {
-            let service = Service::start(&ctx.handle, cfg.num, cfg.clone());
-            ctx.services.insert(cfg.name.clone(), service);
+        for cfg in st.cfg.services.iter() {
+            let service = FeService::start(ctx.handle(), cfg.num, cfg.clone());
+            st.services.insert(cfg.name.clone(), service);
         }
-        ctx.state = State::Running;
+        st.state = State::Running;
     }
 
-    fn finished(&mut self, ctx: &mut CommandCenter, _: &mut CtxService<Self>)
-                -> Result<Async<()>, ()>
+    fn finished(&mut self, st: &mut CommandCenter, _: &mut Context<Self>) -> Result<Async<()>, ()>
     {
-        ctx.exit(true);
+        st.exit(true);
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self, ctx: &mut CommandCenter, srv: &mut CtxService<Self>, cmd: Self::Message)
+    fn call(&mut self, st: &mut CommandCenter, ctx: &mut Context<Self>, cmd: Self::Message)
             -> Result<Async<()>, ()>
     {
         match cmd {
             Ok(Command::Stop) => {
-                self.stop(ctx, srv, true);
+                self.stop(st, ctx, true);
             }
             Ok(Command::Quit) => {
-                self.stop(ctx, srv, false);
+                self.stop(st, ctx, false);
             }
             Ok(Command::Reload) => {
-                ctx.reload_all();
+                st.reload_all();
             }
             Ok(Command::ReapWorkers) => {
                 debug!("Reap workers");
@@ -388,7 +385,7 @@ impl CtxContext for CommandCenterCommands {
                         Ok(WaitStatus::Exited(pid, code)) => {
                             info!("Worker {} exit code: {}", pid, code);
                             let err = ProcessError::from(code);
-                            for srv in ctx.services.values_mut() {
+                            for srv in st.services.values_mut() {
                                 srv.borrow_mut().exited(pid, &err);
                             }
                             continue
@@ -396,7 +393,7 @@ impl CtxContext for CommandCenterCommands {
                         Ok(WaitStatus::Signaled(pid, sig, _)) => {
                             info!("Worker {} exit by signal {:?}", pid, sig);
                             let err = ProcessError::Signal(sig as usize);
-                            for srv in ctx.services.values_mut() {
+                            for srv in st.services.values_mut() {
                                 srv.borrow_mut().exited(pid, &err);
                             }
                             continue
@@ -408,7 +405,7 @@ impl CtxContext for CommandCenterCommands {
                 }
             }
             Err(_) => {
-                ctx.exit(false);
+                st.exit(false);
                 return Ok(Async::Ready(()))
             }
         }

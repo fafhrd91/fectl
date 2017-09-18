@@ -162,9 +162,9 @@ impl Process {
         };
 
         let (r, w) = pipe.ctx_framed(TransportCodec, TransportCodec);
-        CtxBuilder::build(
+        Builder::build(
             process, r, handle,
-            move |srv| ProcessManagement{sink: srv.add_sink(ProcessManagementSink, w)})
+            move |ctx| ProcessManagement{sink: ctx.add_sink(ProcessManagementSink, w)})
             .add_future(
                 Timeout::new(Duration::new(cfg.startup_timeout as u64, 0), &handle).unwrap()
                     .map(|_| ProcessMessage::StartupTimeout)
@@ -236,41 +236,41 @@ impl Drop for Process {
 }
 
 struct ProcessManagement {
-    sink: CtxSink<ProcessManagementSink>,
+    sink: Sink<ProcessManagementSink>,
 }
 
 impl ProcessManagement {
 
-    fn kill(&self, srv: &mut CtxService<Self>) {
+    fn kill(&self, ctx: &mut Context<Self>) {
         let fut = Box::new(
-            Timeout::new(Duration::new(1, 0), srv.handle())
+            Timeout::new(Duration::new(1, 0), ctx.handle())
                 .unwrap()
                 .map(|_| ProcessMessage::Kill));
-        srv.add_future(fut);
+        ctx.add_future(fut);
     }
 }
 
 struct ProcessManagementSink;
 
-impl SinkContext for ProcessManagementSink {
+impl SinkService for ProcessManagementSink {
 
-    type Context = ProcessManagement;
+    type Service = ProcessManagement;
     type SinkMessage = Result<WorkerCommand, io::Error>;
 }
 
-impl CtxContext for ProcessManagement {
+impl Service for ProcessManagement {
 
     type State = Process;
     type Message = Result<ProcessMessage, io::Error>;
     type Result = Result<(), ()>;
 
-    fn finished(&mut self, _: &mut Process, srv: &mut CtxService<Self>) -> Result<Async<()>, ()>
+    fn finished(&mut self, _: &mut Process, ctx: &mut Context<Self>) -> Result<Async<()>, ()>
     {
-        self.kill(srv);
+        self.kill(ctx);
         Ok(Async::NotReady)
     }
 
-    fn call(&mut self, st: &mut Process, srv: &mut CtxService<Self>, msg: Self::Message)
+    fn call(&mut self, st: &mut Process, ctx: &mut Context<Self>, msg: Self::Message)
             -> Result<Async<()>, ()>
     {
         match msg {
@@ -290,16 +290,16 @@ impl CtxContext for ProcessManagement {
                                 ProcessNotification::Loaded(st.pid)) {
                                 // parent is dead
                                 return self.call(
-                                    st, srv, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
+                                    st, ctx, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
                             } else {
                                 // start heartbeat timer
                                 st.hb = Instant::now();
                                 let fut = Box::new(
                                     Timeout::new(
-                                        Duration::new(HEARTBEAT, 0), srv.handle())
+                                        Duration::new(HEARTBEAT, 0), ctx.handle())
                                         .unwrap()
                                         .map(|_| ProcessMessage::Heartbeat));
-                                srv.add_future(fut);
+                                ctx.add_future(fut);
                             }
                         },
                         _ => {
@@ -317,7 +317,7 @@ impl CtxContext for ProcessManagement {
                         ProcessNotification::Message(st.pid, WorkerMessage::reload)) {
                         // parent is dead
                         return self.call(
-                            st, srv, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
+                            st, ctx, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
                     }
                 }
                 WorkerMessage::restart => {
@@ -327,7 +327,7 @@ impl CtxContext for ProcessManagement {
                         ProcessNotification::Message(st.pid, WorkerMessage::restart)) {
                         // parent is dead
                         return self.call(
-                            st, srv, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
+                            st, ctx, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
                     }
                 }
                 WorkerMessage::cfgerror(msg) => {
@@ -337,7 +337,7 @@ impl CtxContext for ProcessManagement {
                     {
                         // parent is dead
                         return self.call(
-                            st, srv, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
+                            st, ctx, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
                     }
                 }
             }
@@ -380,10 +380,10 @@ impl CtxContext for ProcessManagement {
                         // send heartbeat to worker process and reset hearbeat timer
                         self.sink.send_buffered(WorkerCommand::hb);
                         let fut = Box::new(
-                                Timeout::new(Duration::new(HEARTBEAT, 0), srv.handle())
+                                Timeout::new(Duration::new(HEARTBEAT, 0), ctx.handle())
                                     .unwrap()
                                     .map(|_| ProcessMessage::Heartbeat));
-                        srv.add_future(fut);
+                        ctx.add_future(fut);
                     }
                 }
             }
@@ -408,9 +408,9 @@ impl CtxContext for ProcessManagement {
 
                             st.state = ProcessState::Stopping;
                             if let Ok(timeout) = Timeout::new(
-                                Duration::new(st.shutdown_timeout, 0), srv.handle())
+                                Duration::new(st.shutdown_timeout, 0), ctx.handle())
                             {
-                                srv.add_future(timeout.map(|_| ProcessMessage::StopTimeout));
+                                ctx.add_future(timeout.map(|_| ProcessMessage::StopTimeout));
                                 let _ = kill(st.pid, Signal::SIGTERM);
                             } else {
                                 // can not create timeout
@@ -426,10 +426,10 @@ impl CtxContext for ProcessManagement {
                 }
                 ProcessCommand::Quit => {
                     let _ = kill(st.pid, Signal::SIGQUIT);
-                    self.kill(srv)
+                    self.kill(ctx)
                 }
             }
-            Err(_) => self.kill(srv),
+            Err(_) => self.kill(ctx),
         }
         Ok(Async::NotReady)
     }

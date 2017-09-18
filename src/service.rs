@@ -98,7 +98,7 @@ pub enum ReloadStatus {
     Stopping,
 }
 
-pub struct Service {
+pub struct FeService {
     name: String,
     state: ServiceState,
     paused: bool,
@@ -106,9 +106,9 @@ pub struct Service {
     tx: unsync::mpsc::UnboundedSender<ServiceCommand>,
 }
 
-impl Service {
+impl FeService {
 
-    pub fn start(handle: &reactor::Handle, num: u16, cfg: ServiceConfig) -> Rc<RefCell<Service>>
+    pub fn start(handle: &reactor::Handle, num: u16, cfg: ServiceConfig) -> Rc<RefCell<FeService>>
     {
         let (tx, rx) = unsync::mpsc::unbounded();
 
@@ -122,8 +122,8 @@ impl Service {
             workers.push(Worker::new(0, handle, cfg.clone(), tx));
         }
 
-        let mut srv = CtxBuilder::new(
-            ServiceCommands, Service {
+        let mut srv = Builder::new(
+            ServiceCommands, FeService {
                 name: cfg.name.clone(),
                 state: ServiceState::Starting(Task::new()),
                 paused: false,
@@ -389,25 +389,25 @@ impl Service {
 
 pub struct ServiceCommands;
 
-impl CtxContext for ServiceCommands {
-    type State = Service;
+impl Service for ServiceCommands {
+    type State = FeService;
     type Message = Result<ServiceMessage, ()>;
     type Result = Result<(), ()>;
 
-    fn start(&mut self, ctx: &mut Service, _: &mut CtxService<Self>) {
-        for worker in ctx.workers.iter_mut() {
+    fn start(&mut self, st: &mut FeService, _: &mut Context<Self>) {
+        for worker in st.workers.iter_mut() {
             worker.start(Reason::Initial);
         }
     }
 
-    fn finished(&mut self, _: &mut Service, _: &mut CtxService<Self>) -> Result<Async<()>, ()> {
+    fn finished(&mut self, _: &mut FeService, _: &mut Context<Self>) -> Result<Async<()>, ()> {
         // command center probably dead
         Ok(Async::Ready(()))
     }
 
     fn call(&mut self,
-            ctx: &mut Service,
-            _srv: &mut CtxService<Self>,
+            st: &mut FeService,
+            _ctx: &mut Context<Self>,
             cmd: Result<ServiceMessage, ()>) -> Result<Async<()>, ()>
     {
         match cmd {
@@ -420,23 +420,23 @@ impl CtxContext for ServiceCommands {
             //    let _ = ctx.stop(true);
             // }
             Ok(ServiceMessage::Command(ServiceCommand::Quit)) => {
-                let _ = ctx.stop(false, Reason::Exit);
+                let _ = st.stop(false, Reason::Exit);
             }
 
             Ok(ServiceMessage::Process(id, ProcessNotification::Message(pid, msg))) =>
             {
-                ctx.workers[id].message(pid, &msg);
-                ctx.update();
+                st.workers[id].message(pid, &msg);
+                st.update();
             }
             Ok(ServiceMessage::Process(id, ProcessNotification::Failed(pid, err))) =>
             {
-                ctx.workers[id].exited(pid, &err);
-                ctx.update();
+                st.workers[id].exited(pid, &err);
+                st.update();
             },
             Ok(ServiceMessage::Process(id, ProcessNotification::Loaded(pid))) =>
             {
-                ctx.workers[id].loaded(pid);
-                ctx.update();
+                st.workers[id].loaded(pid);
+                st.update();
             }
             Err(_) =>
                 return Ok(Async::Ready(())), // command center probably dead

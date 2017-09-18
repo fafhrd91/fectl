@@ -28,7 +28,6 @@ use cmd::{CommandCenter, CommandError};
 use service::{StartStatus, ReloadStatus, ServiceOperationError};
 use master_types::{MasterRequest, MasterResponse};
 
-
 pub struct Master {
     cfg: Rc<Config>,
     cmd: Rc<RefCell<CommandCenter>>,
@@ -78,7 +77,7 @@ impl Drop for Master {
 }
 
 struct MasterClient {
-    sink: CtxSink<MasterClientSink>,
+    sink: Sink<MasterClientSink>,
 }
 
 #[derive(Debug)]
@@ -88,16 +87,16 @@ enum MasterClientMessage {
 
 impl MasterClient {
 
-    fn hb(&self, srv: &mut CtxService<Self>) {
-        let fut = Timeout::new(Duration::new(1, 0), srv.handle())
+    fn hb(&self, ctx: &mut Context<Self>) {
+        let fut = Timeout::new(Duration::new(1, 0), ctx.handle())
             .unwrap()
             .wrap()
-            .then(|_, ctx: &mut MasterClient, srv: &mut CtxService<Self>| {
-                ctx.sink.send_buffered(MasterResponse::Pong);
-                ctx.hb(srv);
+            .then(|_, srv: &mut MasterClient, ctx: &mut Context<Self>| {
+                srv.sink.send_buffered(MasterResponse::Pong);
+                srv.hb(ctx);
                 fut::ok(())
             });
-        srv.spawn(fut);
+        ctx.spawn(fut);
     }
 
     fn handle_error(&mut self, err: CommandError) {
@@ -125,18 +124,18 @@ impl MasterClient {
         }
     }
 
-    fn stop(&mut self, name: String, ctx: &mut Master, srv: &mut CtxService<Self>) {
+    fn stop(&mut self, name: String, st: &mut Master, ctx: &mut Context<Self>) {
         info!("Client command: Stop service '{}'", name);
-        match ctx.cmd.borrow_mut().stop_service(name.as_str(), true) {
+        match st.cmd.borrow_mut().stop_service(name.as_str(), true) {
             Err(err) => match err {
                 CommandError::ServiceStopped =>
                     self.sink.send_buffered(MasterResponse::ServiceStarted),
                 _ => self.handle_error(err),
             }
             Ok(rx) => {
-                srv.spawn(
-                    rx.wrap().then(|_, ctx: &mut MasterClient, _| {
-                        ctx.sink.send_buffered(MasterResponse::ServiceStopped);
+                ctx.spawn(
+                    rx.wrap().then(|_, srv: &mut MasterClient, _| {
+                        srv.sink.send_buffered(MasterResponse::ServiceStopped);
                         fut::ok(())
                     })
                 );
@@ -144,24 +143,23 @@ impl MasterClient {
         }
     }
 
-    fn reload(&mut self, name: String,
-              ctx: &mut Master, srv: &mut CtxService<Self>, graceful: bool)
+    fn reload(&mut self, name: String, st: &mut Master, ctx: &mut Context<Self>, graceful: bool)
     {
         info!("Client command: Reload service '{}'", name);
-        match ctx.cmd.borrow_mut().reload_service(name.as_str(), graceful) {
+        match st.cmd.borrow_mut().reload_service(name.as_str(), graceful) {
             Err(err) => self.handle_error(err),
             Ok(rx) => {
-                srv.spawn(
-                    rx.wrap().then(|res, ctx: &mut MasterClient, _| {
+                ctx.spawn(
+                    rx.wrap().then(|res, srv: &mut MasterClient, _| {
                         match res {
                             Ok(ReloadStatus::Success) =>
-                                ctx.sink.send_buffered(MasterResponse::ServiceStarted),
+                                srv.sink.send_buffered(MasterResponse::ServiceStarted),
                             Ok(ReloadStatus::Failed) =>
-                                ctx.sink.send_buffered(MasterResponse::ServiceFailed),
+                                srv.sink.send_buffered(MasterResponse::ServiceFailed),
                             Ok(ReloadStatus::Stopping) =>
-                                ctx.sink.send_buffered(MasterResponse::ErrorServiceStopping),
+                                srv.sink.send_buffered(MasterResponse::ErrorServiceStopping),
                             Err(_) =>
-                                ctx.sink.send_buffered(MasterResponse::ServiceFailed),
+                                srv.sink.send_buffered(MasterResponse::ServiceFailed),
                         }
                         fut::ok(())
                     })
@@ -170,23 +168,23 @@ impl MasterClient {
         }
     }
 
-    fn start_service(&mut self, name: String, ctx: &mut Master, srv: &mut CtxService<Self>) {
+    fn start_service(&mut self, name: String, st: &mut Master, ctx: &mut Context<Self>) {
         info!("Client command: Start service '{}'", name);
 
-        match ctx.cmd.borrow_mut().start_service(name.as_str()) {
+        match st.cmd.borrow_mut().start_service(name.as_str()) {
             Err(err) => self.handle_error(err),
             Ok(rx) => {
-                srv.spawn(
-                    rx.wrap().then(|res, ctx: &mut MasterClient, _| {
+                ctx.spawn(
+                    rx.wrap().then(|res, srv: &mut MasterClient, _| {
                         match res {
                             Ok(StartStatus::Success) =>
-                                ctx.sink.send_buffered(MasterResponse::ServiceStarted),
+                                srv.sink.send_buffered(MasterResponse::ServiceStarted),
                             Ok(StartStatus::Failed) =>
-                                ctx.sink.send_buffered(MasterResponse::ServiceFailed),
+                                srv.sink.send_buffered(MasterResponse::ServiceFailed),
                             Ok(StartStatus::Stopping) =>
-                                ctx.sink.send_buffered(MasterResponse::ErrorServiceStopping),
+                                srv.sink.send_buffered(MasterResponse::ErrorServiceStopping),
                             Err(_) =>
-                                ctx.sink.send_buffered(MasterResponse::ServiceFailed),
+                                srv.sink.send_buffered(MasterResponse::ServiceFailed),
                         }
                         fut::ok(())
                     })
@@ -198,31 +196,29 @@ impl MasterClient {
 
 struct MasterClientSink;
 
-impl SinkContext for MasterClientSink {
+impl SinkService for MasterClientSink {
 
-    type Context = MasterClient;
+    type Service = MasterClient;
     type SinkMessage = Result<MasterResponse, io::Error>;
 }
 
-impl CtxContext for MasterClient {
+impl Service for MasterClient {
 
     type State = Master;
     type Message = Result<MasterClientMessage, io::Error>;
     type Result = Result<(), ()>;
 
-    fn start(&mut self, _: &mut Master, srv: &mut CtxService<Self>) {
-        self.hb(srv);
+    fn start(&mut self, _: &mut Master, ctx: &mut Context<Self>) {
+        self.hb(ctx);
     }
 
-    fn finished(&mut self, _: &mut Master, _: &mut CtxService<Self>) -> Result<Async<()>, ()>
+    fn finished(&mut self, _: &mut Master, _: &mut Context<Self>) -> Result<Async<()>, ()>
     {
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self,
-            ctx: &mut Master,
-            srv: &mut CtxService<Self>,
-            msg: Self::Message) -> Result<Async<()>, ()>
+    fn call(&mut self, st: &mut Master, ctx: &mut Context<Self>, msg: Self::Message)
+            -> Result<Async<()>, ()>
     {
         match msg {
             Ok(MasterClientMessage::Request(req)) => {
@@ -230,30 +226,30 @@ impl CtxContext for MasterClient {
                     MasterRequest::Ping =>
                         self.sink.send_buffered(MasterResponse::Pong),
                     MasterRequest::Start(name) =>
-                        self.start_service(name, ctx, srv),
+                        self.start_service(name, st, ctx),
                     MasterRequest::Reload(name) =>
-                        self.reload(name, ctx, srv, true),
+                        self.reload(name, st, ctx, true),
                     MasterRequest::Restart(name) =>
-                        self.reload(name, ctx, srv, false),
+                        self.reload(name, st, ctx, false),
                     MasterRequest::Stop(name) =>
-                        self.stop(name, ctx, srv),
+                        self.stop(name, st, ctx),
                     MasterRequest::Pause(name) => {
                         info!("Client command: Pause service '{}'", name);
-                        match ctx.cmd.borrow_mut().pause_service(name.as_str()) {
+                        match st.cmd.borrow_mut().pause_service(name.as_str()) {
                             Err(err) => self.handle_error(err),
                             Ok(_) => self.sink.send_buffered(MasterResponse::Done)
                         }
                     }
                     MasterRequest::Resume(name) => {
                         info!("Client command: Resume service '{}'", name);
-                        match ctx.cmd.borrow_mut().resume_service(name.as_str()) {
+                        match st.cmd.borrow_mut().resume_service(name.as_str()) {
                             Err(err) => self.handle_error(err),
                             Ok(_) => self.sink.send_buffered(MasterResponse::Done)
                         }
                     }
                     MasterRequest::Status(name) => {
                         debug!("Client command: Service status '{}'", name);
-                        match ctx.cmd.borrow().service_status(name.as_str()) {
+                        match st.cmd.borrow().service_status(name.as_str()) {
                             Ok(status) => self.sink.send_buffered(
                                 MasterResponse::ServiceStatus(status)),
                             Err(err) => self.handle_error(err),
@@ -261,7 +257,7 @@ impl CtxContext for MasterClient {
                     }
                     MasterRequest::SPid(name) => {
                         debug!("Client command: Service status '{}'", name);
-                        match ctx.cmd.borrow().service_worker_pids(name.as_str()) {
+                        match st.cmd.borrow().service_worker_pids(name.as_str()) {
                             Ok(pids) => self.sink.send_buffered(
                                 MasterResponse::ServiceWorkerPids(pids)),
                             Err(err) => self.handle_error(err),
@@ -276,10 +272,10 @@ impl CtxContext for MasterClient {
                             format!("{} {}", PKG_INFO.name, PKG_INFO.version)));
                     },
                     MasterRequest::Quit => {
-                        let rx = ctx.cmd.borrow_mut().stop();
-                        srv.spawn(
-                            rx.wrap().then(|_, ctx: &mut Self, _| {
-                                ctx.sink.send_buffered(MasterResponse::Done);
+                        let rx = st.cmd.borrow_mut().stop();
+                        ctx.spawn(
+                            rx.wrap().then(|_, srv: &mut Self, _| {
+                                srv.sink.send_buffered(MasterResponse::Done);
                                 fut::ok(())
                             }));
                     }
@@ -293,23 +289,23 @@ impl CtxContext for MasterClient {
 
 struct MasterListener;
 
-impl CtxContext for MasterListener {
+impl Service for MasterListener {
     type State = Master;
     type Message = Result<(UnixStream, std::os::unix::net::SocketAddr), io::Error>;
     type Result = Result<(), ()>;
 
-    fn finished(&mut self, _: &mut Master, _: &mut CtxService<Self>) -> Result<Async<()>, ()> {
+    fn finished(&mut self, _: &mut Master, _: &mut Context<Self>) -> Result<Async<()>, ()> {
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self, _: &mut Master, srv: &mut CtxService<Self>, msg: Self::Message)
+    fn call(&mut self, _: &mut Master, ctx: &mut Context<Self>, msg: Self::Message)
             -> Result<Async<()>, ()>
     {
         match msg {
             Ok((stream, _)) => {
                 let (r, w) = stream.ctx_framed(MasterTransportCodec, MasterTransportCodec);
-                CtxBuilder::from_srv(
-                    srv, r, move |srv| MasterClient{sink: srv.add_sink(MasterClientSink, w)}
+                Builder::from_context(
+                    ctx, r, move |ctx| MasterClient{sink: ctx.add_sink(MasterClientSink, w)}
                 ).run();
             }
             _ => (),
@@ -361,6 +357,8 @@ impl Encoder for MasterTransportCodec
     }
 }
 
+const HOST: &str = "127.0.0.1:57897";
+
 /// Start master process
 pub fn start(cfg: Config) -> bool {
     // init logging
@@ -386,7 +384,7 @@ pub fn start(cfg: Config) -> bool {
             io::ErrorKind::AddrInUse => {
                 match client::is_alive(&cfg.master) {
                     client::AliveStatus::Alive => {
-                        error!("Can not start: Service is running.");
+                        error!("Can not start: Another process is running.");
                         return false
                     },
                     client::AliveStatus::NotResponding => {
