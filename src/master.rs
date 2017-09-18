@@ -372,6 +372,17 @@ pub fn start(cfg: Config) -> bool {
         return false
     }
 
+    // sem
+    match std::net::TcpListener::bind(HOST) {
+        Ok(listener) => {
+            std::mem::forget(listener);
+        }
+        Err(_) => {
+            error!("Can not start: Another process is running.");
+            return false
+        }
+    }
+
     // create commands listener and also check if service process is running
     let lst = match StdUnixListener::bind(&cfg.master.sock) {
         Ok(lst) => lst,
