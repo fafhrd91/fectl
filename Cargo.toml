@@ -21,10 +21,6 @@ path = "src/main.rs"
 name = "fectl"
 path = "client/main.rs"
 
-[lib]
-name = "ctx"
-path = "ctx/lib.rs"
-
 [dependencies]
 libc = "0.2"
 nix = "0.9"
@@ -58,6 +54,10 @@ toml = "*"
 serde = "*"
 serde_json = "*"
 serde_derive = "*"
+
+[dependencies.ctx]
+#path = "../ctx"
+git = "https://github.com/fafhrd91/ctx.git"
 
 [profile.release]
 lto = true
