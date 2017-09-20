@@ -60,7 +60,7 @@ impl Master {
             cfg: cfg,
             cmd: cmd,
         };
-        MasterListener.run(master, lst.incoming(), &handle);
+        Builder::build(MasterListener, master, lst.incoming(), &handle).run();
 
         // run loop
         match core.run(stop_rx) {
@@ -205,19 +205,20 @@ impl SinkService for MasterClientSink {
 impl Service for MasterClient {
 
     type State = Master;
+    type Context = Context<Self>;
     type Message = Result<MasterClientMessage, io::Error>;
     type Result = Result<(), ()>;
 
-    fn start(&mut self, _: &mut Master, ctx: &mut Context<Self>) {
+    fn start(&mut self, _: &mut Master, ctx: &mut Self::Context) {
         self.hb(ctx);
     }
 
-    fn finished(&mut self, _: &mut Master, _: &mut Context<Self>) -> Result<Async<()>, ()>
+    fn finished(&mut self, _: &mut Master, _: &mut Self::Context) -> Result<Async<()>, ()>
     {
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self, st: &mut Master, ctx: &mut Context<Self>, msg: Self::Message)
+    fn call(&mut self, st: &mut Master, ctx: &mut Self::Context, msg: Self::Message)
             -> Result<Async<()>, ()>
     {
         match msg {
@@ -291,14 +292,15 @@ struct MasterListener;
 
 impl Service for MasterListener {
     type State = Master;
+    type Context = Context<Self>;
     type Message = Result<(UnixStream, std::os::unix::net::SocketAddr), io::Error>;
     type Result = Result<(), ()>;
 
-    fn finished(&mut self, _: &mut Master, _: &mut Context<Self>) -> Result<Async<()>, ()> {
+    fn finished(&mut self, _: &mut Master, _: &mut Self::Context) -> Result<Async<()>, ()> {
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self, _: &mut Master, ctx: &mut Context<Self>, msg: Self::Message)
+    fn call(&mut self, _: &mut Master, ctx: &mut Self::Context, msg: Self::Message)
             -> Result<Async<()>, ()>
     {
         match msg {

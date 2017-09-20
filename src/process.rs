@@ -162,7 +162,7 @@ impl Process {
         };
 
         let (r, w) = pipe.ctx_framed(TransportCodec, TransportCodec);
-        Builder::build(
+        Builder::with_service_init(
             process, r, handle,
             move |ctx| ProcessManagement{sink: ctx.add_sink(ProcessManagementSink, w)})
             .add_future(
@@ -261,16 +261,17 @@ impl SinkService for ProcessManagementSink {
 impl Service for ProcessManagement {
 
     type State = Process;
+    type Context = Context<Self>;
     type Message = Result<ProcessMessage, io::Error>;
     type Result = Result<(), ()>;
 
-    fn finished(&mut self, _: &mut Process, ctx: &mut Context<Self>) -> Result<Async<()>, ()>
+    fn finished(&mut self, _: &mut Process, ctx: &mut Self::Context) -> Result<Async<()>, ()>
     {
         self.kill(ctx);
         Ok(Async::NotReady)
     }
 
-    fn call(&mut self, st: &mut Process, ctx: &mut Context<Self>, msg: Self::Message)
+    fn call(&mut self, st: &mut Process, ctx: &mut Self::Context, msg: Self::Message)
             -> Result<Async<()>, ()>
     {
         match msg {

@@ -122,7 +122,7 @@ impl FeService {
             workers.push(Worker::new(0, handle, cfg.clone(), tx));
         }
 
-        let mut srv = Builder::new(
+        let mut srv = Builder::build(
             ServiceCommands, FeService {
                 name: cfg.name.clone(),
                 state: ServiceState::Starting(Task::new()),
@@ -391,23 +391,23 @@ pub struct ServiceCommands;
 
 impl Service for ServiceCommands {
     type State = FeService;
+    type Context = Context<Self>;
     type Message = Result<ServiceMessage, ()>;
     type Result = Result<(), ()>;
 
-    fn start(&mut self, st: &mut FeService, _: &mut Context<Self>) {
+    fn start(&mut self, st: &mut FeService, _: &mut Self::Context) {
         for worker in st.workers.iter_mut() {
             worker.start(Reason::Initial);
         }
     }
 
-    fn finished(&mut self, _: &mut FeService, _: &mut Context<Self>) -> Result<Async<()>, ()> {
+    fn finished(&mut self, _: &mut FeService, _: &mut Self::Context) -> Result<Async<()>, ()> {
         // command center probably dead
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self,
-            st: &mut FeService,
-            _ctx: &mut Context<Self>,
+    fn call(&mut self, st: &mut FeService,
+            _: &mut Self::Context,
             cmd: Result<ServiceMessage, ()>) -> Result<Async<()>, ()>
     {
         match cmd {

@@ -71,7 +71,7 @@ impl CommandCenter {
         };
 
         // start command center
-        CommandCenterCommands.clone_and_run(cmd, cmd_rx, &handle)
+        Builder::build(CommandCenterCommands, cmd, cmd_rx, &handle).clone_and_run()
     }
 
     fn exit(&mut self, success: bool) {
@@ -343,10 +343,11 @@ impl CommandCenterCommands {
 impl Service for CommandCenterCommands {
 
     type State = CommandCenter;
+    type Context = Context<Self>;
     type Message = Result<Command, ()>;
     type Result = Result<(), ()>;
 
-    fn start(&mut self, st: &mut CommandCenter, ctx: &mut Context<Self>)
+    fn start(&mut self, st: &mut CommandCenter, ctx: &mut Self::Context)
     {
         info!("Starting ctl service: {}", getpid());
         self.init_signals(ctx);
@@ -359,13 +360,13 @@ impl Service for CommandCenterCommands {
         st.state = State::Running;
     }
 
-    fn finished(&mut self, st: &mut CommandCenter, _: &mut Context<Self>) -> Result<Async<()>, ()>
+    fn finished(&mut self, st: &mut CommandCenter, _: &mut Self::Context) -> Result<Async<()>, ()>
     {
         st.exit(true);
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self, st: &mut CommandCenter, ctx: &mut Context<Self>, cmd: Self::Message)
+    fn call(&mut self, st: &mut CommandCenter, ctx: &mut Self::Context, cmd: Self::Message)
             -> Result<Async<()>, ()>
     {
         match cmd {
