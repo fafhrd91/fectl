@@ -32,6 +32,34 @@ pub struct Master {
     cmd: Address<CommandCenter>,
 }
 
+impl Service for Master {
+
+    type Context = Context<Self>;
+    type Message = Result<(UnixStream, std::os::unix::net::SocketAddr), io::Error>;
+    type Result = Result<(), ()>;
+
+    fn finished(&mut self, _: &mut Self::Context) -> Result<Async<()>, ()> {
+        Ok(Async::Ready(()))
+    }
+
+    fn call(&mut self, ctx: &mut Self::Context, msg: Self::Message)
+            -> Result<Async<()>, ()>
+    {
+        match msg {
+            Ok((stream, _)) => {
+                let cmd = self.cmd.clone();
+                let (r, w) = stream.ctx_framed(MasterTransportCodec, MasterTransportCodec);
+                Builder::from_context(
+                    ctx, r, move |ctx| MasterClient{cmd: cmd,
+                                                    sink: ctx.add_sink(MasterClientSink, w)}
+                ).run();
+            }
+            _ => (),
+        }
+        Ok(Async::NotReady)
+    }
+}
+
 impl Master {
 
     pub fn start(cfg: Config, lst: StdUnixListener) -> bool {
@@ -59,7 +87,7 @@ impl Master {
             cfg: cfg,
             cmd: cmd,
         };
-        Builder::build(MasterListener, master, lst.incoming(), &handle).run();
+        Builder::build(master, lst.incoming(), &handle).run();
 
         // run loop
         match core.run(stop_rx) {
@@ -76,6 +104,7 @@ impl Drop for Master {
 }
 
 struct MasterClient {
+    cmd: Address<CommandCenter>,
     sink: Sink<MasterClientSink>,
 }
 
@@ -123,10 +152,10 @@ impl MasterClient {
         }
     }
 
-    fn stop(&mut self, name: String, st: &mut Master, ctx: &mut Context<Self>) {
+    fn stop(&mut self, name: String, ctx: &mut Context<Self>) {
         info!("Client command: Stop service '{}'", name);
 
-        cmd::StopService(name, true).send_to(&st.cmd).ctxfuture()
+        cmd::StopService(name, true).send_to(&self.cmd).ctxfuture()
             .then(|res, srv: &mut MasterClient, _| {
                 match res {
                     Err(_) => (),
@@ -142,11 +171,11 @@ impl MasterClient {
             }).spawn(ctx);
     }
 
-    fn reload(&mut self, name: String, st: &mut Master, ctx: &mut Context<Self>, graceful: bool)
+    fn reload(&mut self, name: String, ctx: &mut Context<Self>, graceful: bool)
     {
         info!("Client command: Reload service '{}'", name);
 
-        cmd::ReloadService(name, graceful).send_to(&st.cmd).ctxfuture()
+        cmd::ReloadService(name, graceful).send_to(&self.cmd).ctxfuture()
             .then(|res, srv: &mut MasterClient, _| {
                 match res {
                     Err(_) => (),
@@ -164,10 +193,10 @@ impl MasterClient {
             }).spawn(ctx);
     }
 
-    fn start_service(&mut self, name: String, st: &mut Master, ctx: &mut Context<Self>) {
+    fn start_service(&mut self, name: String, ctx: &mut Context<Self>) {
         info!("Client command: Start service '{}'", name);
 
-        cmd::StartService(name).send_to(&st.cmd).ctxfuture()
+        cmd::StartService(name).send_to(&self.cmd).ctxfuture()
             .then(|res, srv: &mut MasterClient, _| {
                 match res {
                     Err(_) => (),
@@ -196,22 +225,20 @@ impl SinkService for MasterClientSink {
 
 impl Service for MasterClient {
 
-    type State = Master;
     type Context = Context<Self>;
     type Message = Result<MasterClientMessage, io::Error>;
     type Result = Result<(), ()>;
 
-    fn start(&mut self, _: &mut Master, ctx: &mut Self::Context) {
+    fn start(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
     }
 
-    fn finished(&mut self, _: &mut Master, _: &mut Self::Context) -> Result<Async<()>, ()>
+    fn finished(&mut self, _: &mut Self::Context) -> Result<Async<()>, ()>
     {
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self, st: &mut Master, ctx: &mut Self::Context, msg: Self::Message)
-            -> Result<Async<()>, ()>
+    fn call(&mut self, ctx: &mut Self::Context, msg: Self::Message) -> Result<Async<()>, ()>
     {
         match msg {
             Ok(MasterClientMessage::Request(req)) => {
@@ -219,16 +246,16 @@ impl Service for MasterClient {
                     MasterRequest::Ping =>
                         self.sink.send_buffered(MasterResponse::Pong),
                     MasterRequest::Start(name) =>
-                        self.start_service(name, st, ctx),
+                        self.start_service(name, ctx),
                     MasterRequest::Reload(name) =>
-                        self.reload(name, st, ctx, true),
+                        self.reload(name, ctx, true),
                     MasterRequest::Restart(name) =>
-                        self.reload(name, st, ctx, false),
+                        self.reload(name, ctx, false),
                     MasterRequest::Stop(name) =>
-                        self.stop(name, st, ctx),
+                        self.stop(name, ctx),
                     MasterRequest::Pause(name) => {
                         info!("Client command: Pause service '{}'", name);
-                        cmd::PauseService(name).send_to(&st.cmd).ctxfuture()
+                        cmd::PauseService(name).send_to(&self.cmd).ctxfuture()
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -240,7 +267,7 @@ impl Service for MasterClient {
                     }
                     MasterRequest::Resume(name) => {
                         info!("Client command: Resume service '{}'", name);
-                        cmd::ResumeService(name).send_to(&st.cmd).ctxfuture()
+                        cmd::ResumeService(name).send_to(&self.cmd).ctxfuture()
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -252,7 +279,7 @@ impl Service for MasterClient {
                     }
                     MasterRequest::Status(name) => {
                         debug!("Client command: Service status '{}'", name);
-                        cmd::StatusService(name).send_to(&st.cmd).ctxfuture()
+                        cmd::StatusService(name).send_to(&self.cmd).ctxfuture()
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -265,7 +292,7 @@ impl Service for MasterClient {
                     }
                     MasterRequest::SPid(name) => {
                         debug!("Client command: Service status '{}'", name);
-                        cmd::ServicePids(name).send_to(&st.cmd).ctxfuture()
+                        cmd::ServicePids(name).send_to(&self.cmd).ctxfuture()
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -285,7 +312,7 @@ impl Service for MasterClient {
                             format!("{} {}", PKG_INFO.name, PKG_INFO.version)));
                     },
                     MasterRequest::Quit => {
-                        cmd::Stop.send_to(&st.cmd).ctxfuture()
+                        cmd::Stop.send_to(&self.cmd).ctxfuture()
                             .then(|_, srv: &mut MasterClient, _| {
                                 srv.sink.send_buffered(MasterResponse::Done);
                                 fut::ok(())
@@ -296,34 +323,6 @@ impl Service for MasterClient {
             },
             Err(_) => Err(()),
         }
-    }
-}
-
-struct MasterListener;
-
-impl Service for MasterListener {
-    type State = Master;
-    type Context = Context<Self>;
-    type Message = Result<(UnixStream, std::os::unix::net::SocketAddr), io::Error>;
-    type Result = Result<(), ()>;
-
-    fn finished(&mut self, _: &mut Master, _: &mut Self::Context) -> Result<Async<()>, ()> {
-        Ok(Async::Ready(()))
-    }
-
-    fn call(&mut self, _: &mut Master, ctx: &mut Self::Context, msg: Self::Message)
-            -> Result<Async<()>, ()>
-    {
-        match msg {
-            Ok((stream, _)) => {
-                let (r, w) = stream.ctx_framed(MasterTransportCodec, MasterTransportCodec);
-                Builder::from_context(
-                    ctx, r, move |ctx| MasterClient{sink: ctx.add_sink(MasterClientSink, w)}
-                ).run();
-            }
-            _ => (),
-        }
-        Ok(Async::NotReady)
     }
 }
 

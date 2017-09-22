@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "ctx"
 version = "0.1.0"
-source = "git+https://github.com/fafhrd91/ctx.git#60ae192a6365e9a1553d51b6d4509dd0cc17ac58"
+source = "git+https://github.com/fafhrd91/ctx.git#e38cb143badeae17624fc9fb0b38c9815b776cff"
 dependencies = [
  "boxfnonce 0.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",

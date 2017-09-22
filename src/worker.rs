@@ -2,16 +2,18 @@ use std;
 use std::time::{Duration, Instant};
 
 use nix::unistd::Pid;
-use futures::unsync;
 use tokio_core::reactor;
+
+use ctx::prelude::*;
 
 use utils::str;
 use event::{Events, State, Reason};
 use config::ServiceConfig;
-use process::{Process, ProcessCommand, ProcessNotification, ProcessError};
+use process::{self, Process, ProcessError};
+use service::FeService;
 
 #[allow(non_camel_case_types)]
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 #[serde(tag="cmd", content="data")]
 pub enum WorkerCommand {
     prepare,
@@ -41,7 +43,6 @@ pub enum WorkerMessage {
     hb,
 }
 
-#[derive(Debug)]
 enum WorkerState {
     Initial,
     Starting(ProcessInfo),
@@ -54,27 +55,36 @@ enum WorkerState {
     Stopped,
 }
 
-#[derive(Debug)]
 struct ProcessInfo {
     pid: Pid,
-    tx: unsync::mpsc::UnboundedSender<ProcessCommand>,
+    addr: Option<Address<Process>>,
 }
 
 impl ProcessInfo {
     fn stop(&self) {
-        let _ = self.tx.unbounded_send(ProcessCommand::Stop);
+        if let Some(ref addr) = self.addr {
+            process::StopProcess.send_to(addr);
+        }
     }
     fn quit(&self) {
-        let _ = self.tx.unbounded_send(ProcessCommand::Quit);
+        if let Some(ref addr) = self.addr {
+            process::QuitProcess.send_to(addr);
+        }
     }
     fn start(&self) {
-        let _ = self.tx.unbounded_send(ProcessCommand::Start);
+        if let Some(ref addr) = self.addr {
+            process::StartProcess.send_to(addr);
+        }
     }
     fn pause(&self) {
-        let _ = self.tx.unbounded_send(ProcessCommand::Pause);
+        if let Some(ref addr) = self.addr {
+            process::PauseProcess.send_to(addr);
+        }
     }
     fn resume(&self) {
-        let _ = self.tx.unbounded_send(ProcessCommand::Resume);
+        if let Some(ref addr) = self.addr {
+            process::ResumeProcess.send_to(addr);
+        }
     }
 }
 
@@ -87,15 +97,14 @@ pub struct Worker {
     pub restore_from_fail: bool,
     started: Instant,
     restarts: u16,
-    cmd: unsync::mpsc::UnboundedSender<ProcessNotification>,
+    addr: Address<FeService>,
 }
 
 impl Worker {
 
     pub fn new(idx: usize, handle: &reactor::Handle, cfg: ServiceConfig,
-               cmd: unsync::mpsc::UnboundedSender<ProcessNotification>) -> Worker
+               addr: Address<FeService>) -> Worker
     {
-
         Worker {
             idx: idx,
             cfg: cfg,
@@ -105,7 +114,7 @@ impl Worker {
             started: Instant::now(),
             restore_from_fail: false,
             restarts: 0,
-            cmd: cmd}
+            addr: addr}
     }
 
     pub fn start(&mut self, reason: Reason) {
@@ -113,8 +122,9 @@ impl Worker {
         match self.state {
             WorkerState::Initial | WorkerState::Stopped | WorkerState::Failed => {
                 debug!("Starting worker process id: {:?}", id);
-                let (pid, tx) = Process::start(&self.handle, &self.cfg, self.cmd.clone());
-                self.state = WorkerState::Starting(ProcessInfo{pid: pid, tx: tx});
+                let (pid, addr) = Process::start(
+                    self.idx, &self.handle, &self.cfg, self.addr.clone());
+                self.state = WorkerState::Starting(ProcessInfo{pid: pid, addr: addr});
                 self.events.add(State::Starting, reason, str(pid));
             }
             _ => (),
@@ -202,8 +212,9 @@ impl Worker {
         match state {
             WorkerState::Running(process) => {
                 // start new worker
-                let (pid, tx) = Process::start(&self.handle, &self.cfg, self.cmd.clone());
-                let info = ProcessInfo{pid: pid, tx: tx};
+                let (pid, addr) = Process::start(
+                    self.idx, &self.handle, &self.cfg, self.addr.clone());
+                let info = ProcessInfo{pid: pid, addr: addr};
 
                 if graceful {
                     info!("Reloading worker: (pid:{})", process.pid);
@@ -404,7 +415,7 @@ impl Worker {
 
                     if self.restarts < self.cfg.restarts {
                         // just in case
-                        let _ = (&process.tx).unbounded_send(ProcessCommand::Quit);
+                        process.quit();
 
                         // start new worker
                         self.state = WorkerState::Initial;
@@ -448,9 +459,9 @@ impl Worker {
 
                     if self.restarts < self.cfg.restarts {
                         // start new worker
-                        let (pid, tx) = Process::start(
-                            &self.handle, &self.cfg, self.cmd.clone());
-                        let info = ProcessInfo{pid: pid, tx: tx};
+                        let (pid, addr) = Process::start(
+                            self.idx, &self.handle, &self.cfg, self.addr.clone());
+                        let info = ProcessInfo{pid: pid, addr: addr};
                         self.state = WorkerState::Reloading(info, old_proc);
                     } else {
                         error!("Can not start worker (pid:{}), restoring old worker",
@@ -505,9 +516,9 @@ impl Worker {
 
                     if self.restarts < self.cfg.restarts {
                         // start new worker
-                        let (pid, tx) = Process::start(
-                            &self.handle, &self.cfg, self.cmd.clone());
-                        let info = ProcessInfo{pid: pid, tx: tx};
+                        let (pid, addr) = Process::start(
+                            self.idx, &self.handle, &self.cfg, self.addr.clone());
+                        let info = ProcessInfo{pid: pid, addr: addr};
                         self.state = WorkerState::Restarting(info, old_proc);
                     } else {
                         error!("Can not start worker (pid:{}), restoring old worker",
@@ -530,7 +541,7 @@ impl Worker {
             WorkerState::StoppingOld(process, old_proc) => {
                 // new process died, need to restart
                 if process.pid == pid {
-                    let _ = (&old_proc.tx).unbounded_send(ProcessCommand::Quit);
+                    old_proc.quit();
                     self.restarts += 1;
                     self.state = WorkerState::Initial;
                     self.events.add(State::Failed, err.into(), str(pid));

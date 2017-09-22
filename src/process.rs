@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std;
 use std::io;
 use std::error::Error;
@@ -5,7 +7,7 @@ use std::os::unix::io::RawFd;
 use std::time::{Duration, Instant};
 
 use serde_json as json;
-use futures::{unsync, future, Async, Future, Stream};
+use futures::{Async, Future};
 use byteorder::{ByteOrder, BigEndian};
 use bytes::{BytesMut, BufMut};
 use tokio_core::reactor::{self, Timeout};
@@ -20,43 +22,23 @@ use io::PipeFile;
 use worker::{WorkerMessage, WorkerCommand};
 use event::Reason;
 use exec::exec_worker;
+use service::{self, FeService};
 
 const HEARTBEAT: u64 = 2;
 const WORKER_TIMEOUT: i8 = 98;
 pub const WORKER_INIT_FAILED: i8 = 99;
 pub const WORKER_BOOT_FAILED: i8 = 100;
 
-
-#[derive(PartialEq, Debug)]
-pub enum ProcessCommand {
-    Message(WorkerCommand),
-    Start,
-    Pause,
-    Resume,
-    Stop,
-    Quit,
-}
-
-#[derive(Debug)]
-pub enum ProcessNotification {
-    /// Worker process message
-    Message(Pid, WorkerMessage),
-
-    /// Process heartbeat failed
-    Failed(Pid, ProcessError),
-
-    /// Process heartbeat failed
-    Loaded(Pid),
-}
-
 pub struct Process {
+    idx: usize,
     pid: Pid,
     state: ProcessState,
     hb: Instant,
-    cmd: unsync::mpsc::UnboundedSender<ProcessNotification>,
+    addr: Address<FeService>,
     timeout: Duration,
     startup_timeout: u64,
     shutdown_timeout: u64,
+    sink: Sink<ProcessSink>,
 }
 
 #[derive(Debug)]
@@ -68,9 +50,8 @@ enum ProcessState {
 }
 
 #[derive(PartialEq, Debug)]
-enum ProcessMessage {
+pub enum ProcessMessage {
     Message(WorkerMessage),
-    Command(ProcessCommand),
     StartupTimeout,
     StopTimeout,
     Heartbeat,
@@ -132,53 +113,49 @@ impl<'a> std::convert::From<&'a ProcessError> for Reason
 
 impl Process {
 
-    pub fn start(handle: &reactor::Handle, cfg: &ServiceConfig,
-                 cmd: unsync::mpsc::UnboundedSender<ProcessNotification>)
-                 -> (Pid, unsync::mpsc::UnboundedSender<ProcessCommand>)
+    pub fn start(idx: usize, handle: &reactor::Handle,
+                 cfg: &ServiceConfig, addr: Address<FeService>) -> (Pid, Option<Address<Process>>)
     {
-        let (tx, rx) = unsync::mpsc::unbounded();
-
         // fork process and esteblish communication
         let (pid, pipe) = match Process::fork(handle, cfg) {
             Ok(res) => res,
             Err(err) => {
                 let pid = Pid::from_raw(-1);
-                let _ = cmd.unbounded_send(
-                    ProcessNotification::Failed(
-                        pid, ProcessError::FailedToStart(Some(format!("{}", err)))));
+                service::ProcessFailed(
+                    idx, pid,
+                    ProcessError::FailedToStart(Some(format!("{}", err))))
+                    .send_to(&addr);
 
-                return (pid, tx)
+                return (pid, None)
             }
         };
 
-        // initiate loading procesdure
-        let process = Process {
-            pid: pid,
-            state: ProcessState::Starting,
-            hb: Instant::now(),
-            cmd: cmd,
-            timeout: Duration::new(cfg.timeout as u64, 0),
-            startup_timeout: cfg.startup_timeout as u64,
-            shutdown_timeout: cfg.shutdown_timeout as u64,
-        };
+        let timeout = Duration::new(cfg.timeout as u64, 0);
+        let startup_timeout = cfg.startup_timeout as u64;
+        let shutdown_timeout = cfg.shutdown_timeout as u64;
 
+        // start Process service
         let (r, w) = pipe.ctx_framed(TransportCodec, TransportCodec);
-        Builder::with_service_init(
-            process, r, handle,
-            move |ctx| ProcessManagement{sink: ctx.add_sink(ProcessManagementSink, w)})
+        let addr = Builder::with_service_init(
+            r, handle,
+            move |ctx| Process {
+                idx: idx,
+                pid: pid,
+                state: ProcessState::Starting,
+                hb: Instant::now(),
+                addr: addr,
+                timeout: timeout,
+                startup_timeout: startup_timeout,
+                shutdown_timeout: shutdown_timeout,
+                sink: ctx.add_sink(ProcessSink, w)
+            })
             .add_future(
                 Timeout::new(Duration::new(cfg.startup_timeout as u64, 0), &handle).unwrap()
                     .map(|_| ProcessMessage::StartupTimeout)
             )
-            .add_stream(
-                rx.then(|res| match res {
-                    Ok(cmd) => future::ok(ProcessMessage::Command(cmd)),
-                    Err(_) => future::ok(ProcessMessage::Command(ProcessCommand::Quit)),
-                })
-            )
             .run();
 
-        (pid, tx)
+        (pid, Some(addr))
     }
 
     fn fork(handle: &reactor::Handle, cfg: &ServiceConfig) -> Result<(Pid, PipeFile), io::Error>
@@ -228,19 +205,6 @@ impl Process {
         };
         Ok((p_read, p_write, ch_read, ch_write))
     }
-}
-
-impl Drop for Process {
-    fn drop(&mut self) {
-        let _ = kill(self.pid, Signal::SIGKILL);
-    }
-}
-
-struct ProcessManagement {
-    sink: Sink<ProcessManagementSink>,
-}
-
-impl ProcessManagement {
 
     fn kill(&self, ctx: &mut Context<Self>) {
         let fut = Box::new(
@@ -251,119 +215,106 @@ impl ProcessManagement {
     }
 }
 
-struct ProcessManagementSink;
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = kill(self.pid, Signal::SIGKILL);
+    }
+}
 
-impl SinkService for ProcessManagementSink {
+struct ProcessSink;
 
-    type Service = ProcessManagement;
+impl SinkService for ProcessSink {
+
+    type Service = Process;
     type SinkMessage = Result<WorkerCommand, io::Error>;
 }
 
-impl Service for ProcessManagement {
+impl Service for Process {
 
-    type State = Process;
     type Context = Context<Self>;
     type Message = Result<ProcessMessage, io::Error>;
     type Result = Result<(), ()>;
 
-    fn finished(&mut self, _: &mut Process, ctx: &mut Self::Context) -> Result<Async<()>, ()>
+    fn finished(&mut self, ctx: &mut Self::Context) -> Result<Async<()>, ()>
     {
         self.kill(ctx);
         Ok(Async::NotReady)
     }
 
-    fn call(&mut self, st: &mut Process, ctx: &mut Self::Context, msg: Self::Message)
+    fn call(&mut self, ctx: &mut Self::Context, msg: Self::Message)
             -> Result<Async<()>, ()>
     {
         match msg {
             Ok(ProcessMessage::Message(msg)) => match msg {
                 WorkerMessage::forked => {
-                    debug!("Worker forked (pid:{})", st.pid);
+                    debug!("Worker forked (pid:{})", self.pid);
                     self.sink.send_buffered(WorkerCommand::prepare);
                 }
                 WorkerMessage::loaded => {
-                    match st.state {
+                    match self.state {
                         ProcessState::Starting => {
-                            debug!("Worker loaded (pid:{})", st.pid);
+                            debug!("Worker loaded (pid:{})", self.pid);
+                            service::ProcessLoaded(self.idx, self.pid).send_to(&self.addr);
 
-                            st.state = ProcessState::Running;
-
-                            if let Err(_) = st.cmd.unbounded_send(
-                                ProcessNotification::Loaded(st.pid)) {
-                                // parent is dead
-                                return self.call(
-                                    st, ctx, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
-                            } else {
-                                // start heartbeat timer
-                                st.hb = Instant::now();
-                                let fut = Box::new(
-                                    Timeout::new(
-                                        Duration::new(HEARTBEAT, 0), ctx.handle())
-                                        .unwrap()
-                                        .map(|_| ProcessMessage::Heartbeat));
-                                ctx.add_future(fut);
-                            }
+                            // start heartbeat timer
+                            self.state = ProcessState::Running;
+                            self.hb = Instant::now();
+                            let fut = Box::new(
+                                Timeout::new(
+                                    Duration::new(HEARTBEAT, 0), ctx.handle())
+                                    .unwrap()
+                                    .map(|_| ProcessMessage::Heartbeat));
+                            ctx.add_future(fut);
                         },
                         _ => {
-                            warn!("Received `loaded` message from worker (pid:{})", st.pid);
+                            warn!("Received `loaded` message from worker (pid:{})", self.pid);
                         }
                     }
                 }
                 WorkerMessage::hb => {
-                    st.hb = Instant::now();
+                    self.hb = Instant::now();
                 }
                 WorkerMessage::reload => {
                     // worker requests reload
-                    info!("Worker requests reload (pid:{})", st.pid);
-                    if let Err(_) = st.cmd.unbounded_send(
-                        ProcessNotification::Message(st.pid, WorkerMessage::reload)) {
-                        // parent is dead
-                        return self.call(
-                            st, ctx, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
-                    }
+                    info!("Worker requests reload (pid:{})", self.pid);
+                    service::ProcessMessage(self.idx, self.pid, WorkerMessage::reload)
+                        .send_to(&self.addr);
                 }
                 WorkerMessage::restart => {
                     // worker requests reload
-                    info!("Worker requests restart (pid:{})", st.pid);
-                    if let Err(_) = st.cmd.unbounded_send(
-                        ProcessNotification::Message(st.pid, WorkerMessage::restart)) {
-                        // parent is dead
-                        return self.call(
-                            st, ctx, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
-                    }
+                    info!("Worker requests restart (pid:{})", self.pid);
+                    service::ProcessMessage(self.idx, self.pid, WorkerMessage::restart)
+                        .send_to(&self.addr);
                 }
                 WorkerMessage::cfgerror(msg) => {
-                    error!("Worker config error: {} (pid:{})", msg, st.pid);
-                    if let Err(_) = st.cmd.unbounded_send(ProcessNotification::Failed(
-                        st.pid, ProcessError::ConfigError(msg)))
-                    {
-                        // parent is dead
-                        return self.call(
-                            st, ctx, Ok(ProcessMessage::Command(ProcessCommand::Quit)))
-                    }
+                    error!("Worker config error: {} (pid:{})", msg, self.pid);
+                    service::ProcessFailed(self.idx, self.pid, ProcessError::ConfigError(msg))
+                        .send_to(&self.addr);
                 }
             }
             Ok(ProcessMessage::StartupTimeout) => {
-                match st.state {
+                match self.state {
                     ProcessState::Starting => {
-                        error!("Worker startup timeout after {} secs", st.startup_timeout);
-                        st.state = ProcessState::Failed;
-                        let _ = st.cmd.unbounded_send(ProcessNotification::Failed(
-                            st.pid, ProcessError::StartupTimeout));
-                        let _ = kill(st.pid, Signal::SIGKILL);
+                        error!("Worker startup timeout after {} secs", self.startup_timeout);
+                        service::ProcessFailed(self.idx, self.pid, ProcessError::StartupTimeout)
+                            .send_to(&self.addr);
+
+                        self.state = ProcessState::Failed;
+                        let _ = kill(self.pid, Signal::SIGKILL);
                         return Ok(Async::Ready(()))
                     },
                     _ => ()
                 }
             }
             Ok(ProcessMessage::StopTimeout) => {
-                match st.state {
+                match self.state {
                     ProcessState::Stopping => {
-                        info!("Worker shutdown timeout aftre {} secs", st.shutdown_timeout);
-                        st.state = ProcessState::Failed;
-                        let _ = st.cmd.unbounded_send(ProcessNotification::Failed(
-                            st.pid, ProcessError::StopTimeout));
-                        let _ = kill(st.pid, Signal::SIGKILL);
+                        info!("Worker shutdown timeout aftre {} secs", self.shutdown_timeout);
+                        service::ProcessFailed(self.idx, self.pid, ProcessError::StopTimeout)
+                            .send_to(&self.addr);
+
+                        self.state = ProcessState::Failed;
+                        let _ = kill(self.pid, Signal::SIGKILL);
                         return Ok(Async::Ready(()))
                     },
                     _ => ()
@@ -371,13 +322,13 @@ impl Service for ProcessManagement {
             }
             Ok(ProcessMessage::Heartbeat) => {
                 // makes sense only in running state
-                if let ProcessState::Running = st.state {
-                    if Instant::now().duration_since(st.hb) > st.timeout {
+                if let ProcessState::Running = self.state {
+                    if Instant::now().duration_since(self.hb) > self.timeout {
                         // heartbeat timed out
                         error!("Worker heartbeat failed (pid:{}) after {:?} secs",
-                               st.pid, st.timeout);
-                        let _ = (&st.cmd).unbounded_send(
-                            ProcessNotification::Failed(st.pid, ProcessError::Heartbeat));
+                               self.pid, self.timeout);
+                        service::ProcessFailed(self.idx, self.pid, ProcessError::Heartbeat)
+                            .send_to(&self.addr);
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
                         self.sink.send_buffered(WorkerCommand::hb);
@@ -390,52 +341,127 @@ impl Service for ProcessManagement {
                 }
             }
             Ok(ProcessMessage::Kill) => {
-                let _ = kill(st.pid, Signal::SIGKILL);
+                let _ = kill(self.pid, Signal::SIGKILL);
                 return Ok(Async::Ready(()))
-            }
-            Ok(ProcessMessage::Command(cmd)) => match cmd {
-                ProcessCommand::Message(cmd) =>
-                    self.sink.send_buffered(cmd),
-                ProcessCommand::Start =>
-                    self.sink.send_buffered(WorkerCommand::start),
-                ProcessCommand::Pause =>
-                    self.sink.send_buffered(WorkerCommand::pause),
-                ProcessCommand::Resume =>
-                    self.sink.send_buffered(WorkerCommand::resume),
-                ProcessCommand::Stop => {
-                    info!("Stopping worker: (pid:{})", st.pid);
-                    match st.state {
-                        ProcessState::Running => {
-                            self.sink.send_buffered(WorkerCommand::stop);
-
-                            st.state = ProcessState::Stopping;
-                            if let Ok(timeout) = Timeout::new(
-                                Duration::new(st.shutdown_timeout, 0), ctx.handle())
-                            {
-                                ctx.add_future(timeout.map(|_| ProcessMessage::StopTimeout));
-                                let _ = kill(st.pid, Signal::SIGTERM);
-                            } else {
-                                // can not create timeout
-                                let _ = kill(st.pid, Signal::SIGQUIT);
-                                return Ok(Async::Ready(()))
-                            }
-                        },
-                        _ => {
-                            let _ = kill(st.pid, Signal::SIGQUIT);
-                            return Ok(Async::Ready(()))
-                        }
-                    }
-                }
-                ProcessCommand::Quit => {
-                    let _ = kill(st.pid, Signal::SIGQUIT);
-                    self.kill(ctx)
-                }
             }
             Err(_) => self.kill(ctx),
         }
         Ok(Async::NotReady)
     }
 }
+
+pub struct SendCommand(pub WorkerCommand);
+
+impl Message for SendCommand {
+
+    type Item = ();
+    type Error = ();
+    type Service = Process;
+
+    fn handle(&self, srv: &mut Process, _: &mut Context<Process>) -> MessageFuture<Self>
+    {
+        srv.sink.send_buffered(self.0.clone());
+        Box::new(fut::ok(()))
+    }
+}
+
+pub struct StartProcess;
+
+impl Message for StartProcess {
+
+    type Item = ();
+    type Error = ();
+    type Service = Process;
+
+    fn handle(&self, srv: &mut Process, _: &mut Context<Process>) -> MessageFuture<Self>
+    {
+        srv.sink.send_buffered(WorkerCommand::start);
+        Box::new(fut::ok(()))
+    }
+}
+
+pub struct PauseProcess;
+
+impl Message for PauseProcess {
+
+    type Item = ();
+    type Error = ();
+    type Service = Process;
+
+    fn handle(&self, srv: &mut Process, _: &mut Context<Process>) -> MessageFuture<Self>
+    {
+        srv.sink.send_buffered(WorkerCommand::pause);
+        Box::new(fut::ok(()))
+    }
+}
+
+pub struct ResumeProcess;
+
+impl Message for ResumeProcess {
+
+    type Item = ();
+    type Error = ();
+    type Service = Process;
+
+    fn handle(&self, srv: &mut Process, _: &mut Context<Process>) -> MessageFuture<Self>
+    {
+        srv.sink.send_buffered(WorkerCommand::resume);
+        Box::new(fut::ok(()))
+    }
+}
+
+pub struct StopProcess;
+
+impl Message for StopProcess {
+
+    type Item = ();
+    type Error = ();
+    type Service = Process;
+
+    fn handle(&self, srv: &mut Process, ctx: &mut Context<Process>) -> MessageFuture<Self>
+    {
+        info!("Stopping worker: (pid:{})", srv.pid);
+        match srv.state {
+            ProcessState::Running => {
+                srv.sink.send_buffered(WorkerCommand::stop);
+
+                srv.state = ProcessState::Stopping;
+                if let Ok(timeout) = Timeout::new(
+                    Duration::new(srv.shutdown_timeout, 0), ctx.handle())
+                {
+                    ctx.add_future(timeout.map(|_| ProcessMessage::StopTimeout));
+                    let _ = kill(srv.pid, Signal::SIGTERM);
+                } else {
+                    // can not create timeout
+                    let _ = kill(srv.pid, Signal::SIGQUIT);
+                    // return Ok(Async::Ready(()))
+                }
+            },
+            _ => {
+                let _ = kill(srv.pid, Signal::SIGQUIT);
+                // return Ok(Async::Ready(()))
+            }
+        }
+        Box::new(fut::ok(()))
+    }
+}
+
+pub struct QuitProcess;
+
+impl Message for QuitProcess {
+
+    type Item = ();
+    type Error = ();
+    type Service = Process;
+
+    fn handle(&self, srv: &mut Process, ctx: &mut Context<Process>) -> MessageFuture<Self>
+    {
+        let _ = kill(srv.pid, Signal::SIGQUIT);
+        srv.kill(ctx);
+        Box::new(fut::ok(()))
+    }
+}
+
 
 struct TransportCodec;
 
