@@ -77,12 +77,12 @@ enum ProcessMessage {
     Kill,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProcessError {
     /// Heartbeat failed
     Heartbeat,
     /// Worker startup process failed, possibly application initialization failed
-    FailedToStart(Option<io::Error>),
+    FailedToStart(Option<String>),
     /// Timeout during startup
     StartupTimeout,
     /// Timeout during graceful stop
@@ -144,7 +144,8 @@ impl Process {
             Err(err) => {
                 let pid = Pid::from_raw(-1);
                 let _ = cmd.unbounded_send(
-                    ProcessNotification::Failed(pid, ProcessError::FailedToStart(Some(err))));
+                    ProcessNotification::Failed(
+                        pid, ProcessError::FailedToStart(Some(format!("{}", err)))));
 
                 return (pid, tx)
             }

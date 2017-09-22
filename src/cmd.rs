@@ -1,5 +1,4 @@
 use std::rc::Rc;
-use std::cell::RefCell;
 use std::collections::HashMap;
 
 use libc;
@@ -16,7 +15,7 @@ use ctx::prelude::*;
 use config::Config;
 use event::{Reason, ServiceStatus};
 use process::ProcessError;
-use service::{FeService, StartStatus, ReloadStatus, ServiceOperationError};
+use service::{self, FeService, StartStatus, ReloadStatus, ServiceOperationError};
 
 #[derive(Debug)]
 /// Command center errors
@@ -31,6 +30,7 @@ pub enum CommandError {
     Service(ServiceOperationError),
 }
 
+
 #[derive(PartialEq, Debug)]
 enum State {
     Starting,
@@ -39,40 +39,24 @@ enum State {
 }
 
 #[derive(Debug)]
-enum Command {
+pub enum Command {
     Stop,
     Quit,
     Reload,
     ReapWorkers,
 }
 
-pub struct CommandCenter {
+pub struct CCState {
     cfg: Rc<Config>,
     state: State,
     stop: Option<unsync::oneshot::Sender<bool>>,
     tx: unsync::mpsc::UnboundedSender<Command>,
-    services: HashMap<String, Rc<RefCell<FeService>>>,
+    services: HashMap<String, Address<FeService>>,
     stop_waiters: Vec<unsync::oneshot::Sender<bool>>,
+    stopping: usize,
 }
 
-impl CommandCenter {
-
-    pub fn new(cfg: Rc<Config>, handle: &reactor::Handle, stop: unsync::oneshot::Sender<bool>)
-               -> Rc<RefCell<CommandCenter>> {
-        let (cmd_tx, cmd_rx) = unsync::mpsc::unbounded();
-
-        let cmd = CommandCenter {
-            cfg: cfg,
-            state: State::Starting,
-            stop: Some(stop),
-            tx: cmd_tx,
-            services: HashMap::new(),
-            stop_waiters: Vec::new(),
-        };
-
-        // start command center
-        Builder::build(CommandCenterCommands, cmd, cmd_rx, &handle).clone_and_run()
-    }
+impl CCState {
 
     fn exit(&mut self, success: bool) {
         while let Some(waiter) = self.stop_waiters.pop() {
@@ -83,169 +67,29 @@ impl CommandCenter {
             let _ = stop.send(success);
         }
     }
-
-    pub fn stop(&mut self) -> oneshot::Receiver<bool> {
-        let (tx, rx) = oneshot::channel();
-        self.stop_waiters.push(tx);
-        let _ = self.tx.unbounded_send(Command::Stop);
-        rx
-    }
-
-    pub fn service_status(&self, name: &str) -> Result<ServiceStatus, CommandError>
-    {
-        match self.state {
-            State::Running => {
-                match self.services.get(name) {
-                    Some(service) => Ok(service.borrow().status()),
-                    None => Err(CommandError::UnknownService),
-                }
-            }
-            _ => {
-                Err(CommandError::NotReady)
-            }
-        }
-    }
-
-    pub fn service_worker_pids(&self, name: &str) -> Result<Vec<String>, CommandError>
-    {
-        match self.state {
-            State::Running => {
-                match self.services.get(name) {
-                    Some(service) => Ok(service.borrow().pids()),
-                    None => Err(CommandError::UnknownService),
-                }
-            }
-            _ => {
-                Err(CommandError::NotReady)
-            }
-        }
-    }
-
-    /// Start Service by `name`
-    pub fn start_service(&mut self, name: &str)
-                         -> Result<oneshot::Receiver<StartStatus>, CommandError>
-    {
-        match self.state {
-            State::Running => {
-                info!("Starting service {:?}", name);
-                match self.services.get_mut(name) {
-                    Some(service) => match service.borrow_mut().start_service() {
-                        Ok(rx) => Ok(rx),
-                        Err(err) => Err(CommandError::Service(err))
-                    }
-                    None => Err(CommandError::UnknownService)
-                }
-            }
-            _ => {
-                warn!("Can not reload in system in `{:?}` state", self.state);
-                Err(CommandError::NotReady)
-            }
-        }
-    }
-
-    /// stop Service by name
-    pub fn stop_service(&mut self, name: &str, graceful: bool)
-                        -> Result<oneshot::Receiver<()>, CommandError>
-    {
-        match self.state {
-            State::Running => {
-                info!("Stopping service {:?}", name);
-                match self.services.get_mut(name) {
-                    Some(service) => match service.borrow_mut().stop(
-                        graceful, Reason::ConsoleRequest)
-                    {
-                        Ok(rx) => Ok(rx),
-                        Err(_) => Err(CommandError::ServiceStopped),
-                    },
-                    None => Err(CommandError::UnknownService),
-                }
-            }
-            _ => {
-                warn!("Can not reload in system in `{:?}` state", self.state);
-                Err(CommandError::NotReady)
-            }
-        }
-    }
-
-    /// reload Service by `name`
-    pub fn reload_service(&mut self, name: &str, graceful: bool)
-                          -> Result<oneshot::Receiver<ReloadStatus>, CommandError>
-    {
-        match self.state {
-            State::Running => {
-                info!("Reloading service {:?}", name);
-                match self.services.get_mut(name) {
-                    Some(service) => match service.borrow_mut().reload(graceful) {
-                        Ok(rx) => Ok(rx),
-                        Err(err) => Err(CommandError::Service(err))
-                    }
-                    None => Err(CommandError::UnknownService)
-                }
-            }
-            _ => {
-                warn!("Can not reload in system in `{:?}` state", self.state);
-                Err(CommandError::NotReady)
-            }
-        }
-    }
-
-    pub fn pause_service(&mut self, name: &str) -> Result<(), CommandError>
-    {
-        match self.state {
-            State::Running => {
-                info!("Pause service {:?}", name);
-                match self.services.get_mut(name) {
-                    Some(service) => match service.borrow_mut().pause() {
-                        Ok(_) => Ok(()),
-                        Err(err) => Err(CommandError::Service(err))
-                    }
-                    None => Err(CommandError::UnknownService)
-                }
-            }
-            _ => {
-                warn!("Can not reload in system in `{:?}` state", self.state);
-                Err(CommandError::NotReady)
-            }
-        }
-    }
-
-    pub fn resume_service(&mut self, name: &str) -> Result<(), CommandError>
-    {
-        match self.state {
-            State::Running => {
-                info!("Resume service {:?}", name);
-                match self.services.get_mut(name) {
-                    Some(service) => match service.borrow_mut().resume() {
-                        Ok(_) => Ok(()),
-                        Err(err) => Err(CommandError::Service(err))
-                    }
-                    None => Err(CommandError::UnknownService)
-                }
-            }
-            _ => {
-                warn!("Can not reload in system in `{:?}` state", self.state);
-                Err(CommandError::NotReady)
-            }
-        }
-    }
-
-    /// reload all services
-    pub fn reload_all(&mut self) {
-        match self.state {
-            State::Running => {
-                info!("reloading all services");
-                for srv in self.services.values() {
-                    let _ = srv.borrow_mut().reload(true);
-                }
-            }
-            _ => warn!("Can not reload in system in `{:?}` state", self.state)
-        }
-    }
 }
 
-struct CommandCenterCommands;
+pub struct CommandCenter;
 
-impl CommandCenterCommands {
+impl CommandCenter {
+
+    pub fn start(cfg: Rc<Config>, handle: &reactor::Handle, stop: unsync::oneshot::Sender<bool>)
+                 -> Address<CommandCenter> {
+        let (cmd_tx, cmd_rx) = unsync::mpsc::unbounded();
+
+        let cmd = CCState {
+            cfg: cfg,
+            state: State::Starting,
+            stop: Some(stop),
+            tx: cmd_tx,
+            services: HashMap::new(),
+            stop_waiters: Vec::new(),
+            stopping: 0,
+        };
+
+        // start command center
+        Builder::build(CommandCenter, cmd, cmd_rx, &handle).run()
+    }
 
     fn init_signals(&self, ctx: &mut Context<Self>) {
         let handle = ctx.handle().clone();
@@ -257,7 +101,7 @@ impl CommandCenterCommands {
                     .map(|sig| Box::new(sig.map(|_| {
                         info!("SIGHUP received, reloading");
                         Command::Reload}).map_err(|_| ()))
-                         as Box<ServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenter>>)
                     .map_err(|_| ()))
         );
 
@@ -268,7 +112,7 @@ impl CommandCenterCommands {
                     .map(|sig| Box::new(sig.map(|_| {
                         info!("SIGTERM received, stopping");
                         Command::Stop}).map_err(|_| ()))
-                         as Box<ServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenter>>)
                     .map_err(|_| ()))
         );
 
@@ -279,7 +123,7 @@ impl CommandCenterCommands {
                     .map(|sig| Box::new(sig.map(|_| {
                         info!("SIGINT received, exiting");
                         Command::Quit}).map_err(|_| ()))
-                         as Box<ServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenter>>)
                     .map_err(|_| ()))
         );
 
@@ -290,7 +134,7 @@ impl CommandCenterCommands {
                     .map(|sig| Box::new(sig.map(|_| {
                         info!("SIGQUIT received, exiting");
                         Command::Quit}).map_err(|_| ()))
-                         as Box<ServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenter>>)
                     .map_err(|_| ()))
         );
 
@@ -301,53 +145,341 @@ impl CommandCenterCommands {
                     .map(|sig| Box::new(sig.map(|_| {
                         debug!("SIGCHLD received");
                         Command::ReapWorkers}).map_err(|_| ()))
-                         as Box<ServiceStream<CommandCenterCommands>>)
+                         as Box<ServiceStream<CommandCenter>>)
                     .map_err(|_| ()))
         );
     }
     
-    fn stop(&self, st: &mut CommandCenter, ctx: &mut Context<Self>, graceful: bool)
+    fn stop(&self, st: &mut CCState, _: &mut Context<Self>, graceful: bool)
     {
         if st.state != State::Stopping {
             info!("Stopping service");
 
             st.state = State::Stopping;
-            let mut waiting = false;
             for service in st.services.values() {
-                match service.borrow_mut().stop(graceful, Reason::Exit) {
-                    Ok(rx) => {
-                        waiting = true;
-                        ctx.spawn(
-                            rx.wrap().then(|_, _: &mut _, ctx: &mut Context<CommandCenterCommands>| {
-                                // check if all services are stopped
-                                let s = ctx.as_mut();
-                                for srv in s.services.values() {
-                                    if !srv.borrow().is_stopped() {
-                                        return fut::ok(())
-                                    }
-                                }
-                                s.exit(true);
-                                return fut::ok(())
-                            }));
-                    }
-                    Err(_) => (),
+                st.stopping += 1;
+                let _ = service::StopService(graceful, Reason::Exit).send_to(service)
+                    .ctxfuture()
+                    .then(|res, _: &mut CommandCenter, ctx: &mut Context<Self>| {
+                        ctx.as_mut().stopping -= 1;
+                        let exit = ctx.as_mut().stopping == 0;
+                        if exit {
+                            ctx.as_mut().exit(true);
+                        }
+                        match res {
+                            Ok(_) => fut::ok(()),
+                            Err(_) => fut::err(()),
+                        }
+                    });
+            };
+        }
+    }
+}
+
+
+pub struct ServicePids(pub String);
+
+impl Message for ServicePids {
+
+    type Item = Vec<String>;
+    type Error = CommandError;
+    type Service = CommandCenter;
+
+    fn handle(&self,
+              st: &mut CCState,
+              _srv: &mut CommandCenter,
+              _ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    {
+        match st.state {
+            State::Running => {
+                match st.services.get(&self.0) {
+                    Some(service) => Box::new(
+                        service::ServicePids.send_to(service).ctxfuture()
+                            .then(|res, _, _| match res {
+                                Ok(Ok(status)) => fut::ok(status),
+                                _ => fut::err(CommandError::UnknownService)
+                            })),
+                    None => Box::new(fut::err(CommandError::UnknownService)),
                 }
             }
-            if !waiting {
-                st.exit(true);
+            _ => {
+                Box::new(fut::err(CommandError::NotReady))
             }
         }
     }
 }
 
-impl Service for CommandCenterCommands {
+pub struct Stop;
 
-    type State = CommandCenter;
+impl Message for Stop {
+
+    type Item = oneshot::Receiver<bool>;
+    type Error = ();
+    type Service = CommandCenter;
+
+    fn handle(&self,
+              st: &mut CCState,
+              _srv: &mut CommandCenter,
+              _ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    {
+        let (tx, rx) = oneshot::channel();
+        st.stop_waiters.push(tx);
+        let _ = st.tx.unbounded_send(Command::Stop);
+        Box::new(fut::ok(rx))
+    }
+}
+
+
+/// Start Service by `name`
+pub struct StartService(pub String);
+
+impl Message for StartService {
+
+    type Item = StartStatus;
+    type Error = CommandError;
+    type Service = CommandCenter;
+
+    fn handle(&self,
+              st: &mut CCState,
+              _srv: &mut CommandCenter,
+              _ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    {
+        match st.state {
+            State::Running => {
+                info!("Starting service {:?}", self.0);
+                match st.services.get(&self.0) {
+                    Some(service) => Box::new(
+                        service::StartService.send_to(service).ctxfuture()
+                            .then(|res, _, _| match res {
+                                Ok(Ok(status)) => fut::ok(status),
+                                Ok(Err(err)) => fut::err(CommandError::Service(err)),
+                                Err(_) => fut::err(CommandError::NotReady)
+                            })),
+                    None => Box::new(fut::err(CommandError::UnknownService))
+                }
+            }
+            _ => {
+                warn!("Can not reload in system in `{:?}` state", st.state);
+                Box::new(fut::err(CommandError::NotReady))
+            }
+        }
+    }
+}
+
+/// Stop Service by `name`
+pub struct StopService(pub String, pub bool);
+
+impl Message for StopService {
+
+    type Item = ();
+    type Error = CommandError;
+    type Service = CommandCenter;
+
+    fn handle(&self,
+              st: &mut CCState,
+              _srv: &mut CommandCenter,
+              _ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    {
+        match st.state {
+            State::Running => {
+                info!("Stopping service {:?}", self.0);
+                match st.services.get(&self.0) {
+                    Some(service) => Box::new(
+                        service::StopService(self.1, Reason::ConsoleRequest).send_to(service)
+                            .ctxfuture()
+                            .then(|res, _, _| match res {
+                                Ok(Ok(_)) => fut::ok(()),
+                                _ => fut::err(CommandError::ServiceStopped),
+                            })),
+                        None => Box::new(fut::err(CommandError::UnknownService)),
+                }
+            }
+            _ => {
+                warn!("Can not reload in system in `{:?}` state", st.state);
+                Box::new(fut::err(CommandError::NotReady))
+            }
+        }
+    }
+}
+
+/// Service status message
+pub struct StatusService(pub String);
+
+impl Message for StatusService {
+
+    type Item = ServiceStatus;
+    type Error = CommandError;
+    type Service = CommandCenter;
+
+    fn handle(&self,
+              st: &mut CCState,
+              _srv: &mut CommandCenter,
+              _ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    {
+        match st.state {
+            State::Running => {
+                match st.services.get(&self.0) {
+                    Some(service) => Box::new(
+                        service::ServiceStatus.send_to(service).ctxfuture()
+                            .then(|res, _, _| match res {
+                                Ok(Ok(status)) => fut::ok(status),
+                                _ => fut::err(CommandError::UnknownService)
+                            })),
+                    None => Box::new(fut::err(CommandError::UnknownService)),
+                }
+            }
+            _ => {
+                Box::new(fut::err(CommandError::NotReady))
+            }
+        }
+    }
+}
+
+
+/// Pause service message
+pub struct PauseService(pub String);
+
+impl Message for PauseService {
+
+    type Item = ();
+    type Error = CommandError;
+    type Service = CommandCenter;
+
+    fn handle(&self,
+              st: &mut CCState,
+              _srv: &mut CommandCenter,
+              _ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    {
+        match st.state {
+            State::Running => {
+                info!("Pause service {:?}", self.0);
+                match st.services.get(&self.0) {
+                    Some(service) => Box::new(
+                        service::PauseService.send_to(service).ctxfuture()
+                            .then(|res, _, _| match res {
+                                Ok(Ok(_)) => fut::ok(()),
+                                Ok(Err(err)) => fut::err(CommandError::Service(err)),
+                                Err(_) => fut::err(CommandError::UnknownService)
+                            })),
+                    None => Box::new(fut::err(CommandError::UnknownService))
+                }
+            }
+            _ => {
+                warn!("Can not reload in system in `{:?}` state", st.state);
+                Box::new(fut::err(CommandError::NotReady))
+            }
+        }
+    }
+}
+
+/// Resume service message
+pub struct ResumeService(pub String);
+
+impl Message for ResumeService {
+
+    type Item = ();
+    type Error = CommandError;
+    type Service = CommandCenter;
+
+    fn handle(&self,
+              st: &mut CCState,
+              _srv: &mut CommandCenter,
+              _ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    {
+        match st.state {
+            State::Running => {
+                info!("Resume service {:?}", self.0);
+                match st.services.get(&self.0) {
+                    Some(service) => Box::new(
+                        service::ResumeService.send_to(service).ctxfuture()
+                            .then(|res, _, _| match res {
+                                Ok(Ok(_)) => fut::ok(()),
+                                Ok(Err(err)) => fut::err(CommandError::Service(err)),
+                                Err(_) => fut::err(CommandError::UnknownService)
+                            })),
+                        None => Box::new(fut::err(CommandError::UnknownService))
+                }
+            }
+            _ => {
+                warn!("Can not reload in system in `{:?}` state", st.state);
+                Box::new(fut::err(CommandError::NotReady))
+            }
+        }
+    }
+}
+
+/// Reload service
+pub struct ReloadService(pub String, pub bool);
+
+impl Message for ReloadService {
+
+    type Item = ReloadStatus;
+    type Error = CommandError;
+    type Service = CommandCenter;
+
+    fn handle(&self,
+              st: &mut CCState,
+              _srv: &mut CommandCenter,
+              _ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    {
+        match st.state {
+            State::Running => {
+                info!("Reloading service {:?}", self.0);
+                match st.services.get(&self.0) {
+                    Some(service) => Box::new(
+                        service::ReloadService(self.1).send_to(service).ctxfuture()
+                            .then(|res, _, _| match res {
+                                Ok(Ok(status)) => fut::ok(status),
+                                Ok(Err(err)) => fut::err(CommandError::Service(err)),
+                                Err(_) => fut::err(CommandError::UnknownService)
+                            })),
+                    None => Box::new(fut::err(CommandError::UnknownService))
+                }
+            }
+            _ => {
+                warn!("Can not reload in system in `{:?}` state", st.state);
+                Box::new(fut::err(CommandError::NotReady))
+            }
+        }
+    }
+}
+
+/// reload all services
+pub struct ReloadAll;
+
+impl Message for ReloadAll {
+
+    type Item = ();
+    type Error = CommandError;
+    type Service = CommandCenter;
+
+    fn handle(&self,
+              st: &mut CCState,
+              _srv: &mut CommandCenter,
+              _ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    {
+        match st.state {
+            State::Running => {
+                info!("reloading all services");
+                for srv in st.services.values() {
+                    let _ = service::ReloadService(true).send_to(srv);
+                }
+            }
+            _ => warn!("Can not reload in system in `{:?}` state", st.state)
+        };
+        Box::new(fut::ok(()))
+    }
+}
+
+
+impl Service for CommandCenter {
+
+    type State = CCState;
     type Context = Context<Self>;
     type Message = Result<Command, ()>;
     type Result = Result<(), ()>;
 
-    fn start(&mut self, st: &mut CommandCenter, ctx: &mut Self::Context)
+    fn start(&mut self, st: &mut CCState, ctx: &mut Self::Context)
     {
         info!("Starting ctl service: {}", getpid());
         self.init_signals(ctx);
@@ -360,13 +492,13 @@ impl Service for CommandCenterCommands {
         st.state = State::Running;
     }
 
-    fn finished(&mut self, st: &mut CommandCenter, _: &mut Self::Context) -> Result<Async<()>, ()>
+    fn finished(&mut self, st: &mut CCState, _: &mut Self::Context) -> Result<Async<()>, ()>
     {
         st.exit(true);
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self, st: &mut CommandCenter, ctx: &mut Self::Context, cmd: Self::Message)
+    fn call(&mut self, st: &mut CCState, ctx: &mut Self::Context, cmd: Self::Message)
             -> Result<Async<()>, ()>
     {
         match cmd {
@@ -377,7 +509,7 @@ impl Service for CommandCenterCommands {
                 self.stop(st, ctx, false);
             }
             Ok(Command::Reload) => {
-                st.reload_all();
+                ReloadAll.handle(st, self, ctx);
             }
             Ok(Command::ReapWorkers) => {
                 debug!("Reap workers");
@@ -387,7 +519,8 @@ impl Service for CommandCenterCommands {
                             info!("Worker {} exit code: {}", pid, code);
                             let err = ProcessError::from(code);
                             for srv in st.services.values_mut() {
-                                srv.borrow_mut().exited(pid, &err);
+                                let _ = service::ProcessExited(
+                                    pid.clone(), err.clone()).send_to(srv);
                             }
                             continue
                         }
@@ -395,7 +528,8 @@ impl Service for CommandCenterCommands {
                             info!("Worker {} exit by signal {:?}", pid, sig);
                             let err = ProcessError::Signal(sig as usize);
                             for srv in st.services.values_mut() {
-                                srv.borrow_mut().exited(pid, &err);
+                                let _ = service::ProcessExited(
+                                    pid.clone(), err.clone()).send_to(srv);
                             }
                             continue
                         },

@@ -35,6 +35,7 @@ bytes = "0.4"
 mio = "0.6"
 futures = "0.1"
 tokio-core = "0.1"
+#tokio-core = {path = "../tokio/tokio-core"}
 tokio-io = "0.1"
 tokio-signal = "0.1"
 tokio-uds = "0.1"
@@ -63,3 +64,7 @@ git = "https://github.com/fafhrd91/ctx.git"
 lto = true
 opt-level = 3
 debug = true
+
+#[replace]
+#"tokio-core:0.1.8" = { path = '../tokio/tokio-core' }
+#"tokio-core:0.1.9" = { path = '../tokio/tokio-core' }
