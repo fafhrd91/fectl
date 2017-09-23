@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use libc;
 use futures::unsync::oneshot;
-use futures::{unsync, Async, Future, Stream};
+use futures::{Future, Stream};
 use tokio_core::reactor;
 use tokio_signal;
 use tokio_signal::unix::Signal;
@@ -49,31 +49,28 @@ pub enum Command {
 pub struct CommandCenter {
     cfg: Rc<Config>,
     state: State,
-    stop: Option<unsync::oneshot::Sender<bool>>,
-    tx: unsync::mpsc::UnboundedSender<Command>,
+    stop: Option<oneshot::Sender<bool>>,
     services: HashMap<String, Address<FeService>>,
-    stop_waiters: Vec<unsync::oneshot::Sender<bool>>,
+    stop_waiters: Vec<oneshot::Sender<bool>>,
     stopping: usize,
 }
 
 impl CommandCenter {
 
-    pub fn start(cfg: Rc<Config>, handle: &reactor::Handle, stop: unsync::oneshot::Sender<bool>)
-                 -> Address<CommandCenter> {
-        let (cmd_tx, cmd_rx) = unsync::mpsc::unbounded();
-
+    pub fn start(cfg: Rc<Config>,
+                 handle: &reactor::Handle,
+                 stop: oneshot::Sender<bool>) -> Address<CommandCenter> {
         let cmd = CommandCenter {
             cfg: cfg,
             state: State::Starting,
             stop: Some(stop),
-            tx: cmd_tx,
             services: HashMap::new(),
             stop_waiters: Vec::new(),
             stopping: 0,
         };
 
         // start command center
-        Builder::build(cmd, cmd_rx, &handle).run()
+        Builder::build_default(cmd, &handle).run()
     }
 
     fn exit(&mut self, success: bool) {
@@ -153,7 +150,7 @@ impl CommandCenter {
             self.state = State::Stopping;
             for service in self.services.values() {
                 self.stopping += 1;
-                service::StopService(graceful, Reason::Exit).send_to(service)
+                service::StopService(graceful, Reason::Exit).send(service)
                     .ctxfuture()
                     .then(|res, srv: &mut CommandCenter, _: &mut Context<Self>| {
                         srv.stopping -= 1;
@@ -187,7 +184,7 @@ impl Message for ServicePids {
             State::Running => {
                 match srv.services.get(&self.0) {
                     Some(service) => Box::new(
-                        service::ServicePids.send_to(service).ctxfuture()
+                        service::ServicePids.send(service).ctxfuture()
                             .then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 _ => fut::err(CommandError::UnknownService)
@@ -210,12 +207,13 @@ impl Message for Stop {
     type Error = ();
     type Service = CommandCenter;
 
-    fn handle(&self, srv: &mut CommandCenter,
-              _: &mut Context<CommandCenter>) -> MessageFuture<Self>
+    fn handle(&self,
+              srv: &mut CommandCenter,
+              ctx: &mut Context<CommandCenter>) -> MessageFuture<Self>
     {
         let (tx, rx) = oneshot::channel();
         srv.stop_waiters.push(tx);
-        let _ = srv.tx.unbounded_send(Command::Stop);
+        srv.stop(ctx, true);
         Box::new(fut::ok(rx))
     }
 }
@@ -238,7 +236,7 @@ impl Message for StartService {
                 info!("Starting service {:?}", self.0);
                 match srv.services.get(&self.0) {
                     Some(service) => Box::new(
-                        service::StartService.send_to(service).ctxfuture()
+                        service::StartService.send(service).ctxfuture()
                             .then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -272,7 +270,7 @@ impl Message for StopService {
                 info!("Stopping service {:?}", self.0);
                 match srv.services.get(&self.0) {
                     Some(service) => Box::new(
-                        service::StopService(self.1, Reason::ConsoleRequest).send_to(service)
+                        service::StopService(self.1, Reason::ConsoleRequest).send(service)
                             .ctxfuture()
                             .then(|res, _, _| match res {
                                 Ok(Ok(_)) => fut::ok(()),
@@ -305,7 +303,7 @@ impl Message for StatusService {
             State::Running => {
                 match srv.services.get(&self.0) {
                     Some(service) => Box::new(
-                        service::ServiceStatus.send_to(service).ctxfuture()
+                        service::ServiceStatus.send(service).ctxfuture()
                             .then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 _ => fut::err(CommandError::UnknownService)
@@ -338,7 +336,7 @@ impl Message for PauseService {
                 info!("Pause service {:?}", self.0);
                 match srv.services.get(&self.0) {
                     Some(service) => Box::new(
-                        service::PauseService.send_to(service).ctxfuture()
+                        service::PauseService.send(service).ctxfuture()
                             .then(|res, _, _| match res {
                                 Ok(Ok(_)) => fut::ok(()),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -372,7 +370,7 @@ impl Message for ResumeService {
                 info!("Resume service {:?}", self.0);
                 match srv.services.get(&self.0) {
                     Some(service) => Box::new(
-                        service::ResumeService.send_to(service).ctxfuture()
+                        service::ResumeService.send(service).ctxfuture()
                             .then(|res, _, _| match res {
                                 Ok(Ok(_)) => fut::ok(()),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -406,7 +404,7 @@ impl Message for ReloadService {
                 info!("Reloading service {:?}", self.0);
                 match srv.services.get(&self.0) {
                     Some(service) => Box::new(
-                        service::ReloadService(self.1).send_to(service).ctxfuture()
+                        service::ReloadService(self.1).send(service).ctxfuture()
                             .then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -439,7 +437,7 @@ impl Message for ReloadAll {
             State::Running => {
                 info!("reloading all services");
                 for srv in srv.services.values() {
-                    let _ = service::ReloadService(true).send_to(srv);
+                    service::ReloadService(true).tell(srv);
                 }
             }
             _ => warn!("Can not reload in system in `{:?}` state", srv.state)
@@ -453,7 +451,6 @@ impl Service for CommandCenter {
 
     type Context = Context<Self>;
     type Message = Result<Command, ()>;
-    type Result = Result<(), ()>;
 
     fn start(&mut self, ctx: &mut Self::Context)
     {
@@ -468,13 +465,14 @@ impl Service for CommandCenter {
         self.state = State::Running;
     }
 
-    fn finished(&mut self, _: &mut Self::Context) -> Result<Async<()>, ()>
+    fn finished(&mut self, _: &mut Self::Context) -> ServiceResult
     {
         self.exit(true);
-        Ok(Async::Ready(()))
+
+        ServiceResult::Done
     }
 
-    fn call(&mut self, ctx: &mut Self::Context, cmd: Self::Message) -> Result<Async<()>, ()>
+    fn call(&mut self, ctx: &mut Self::Context, cmd: Self::Message) -> ServiceResult
     {
         match cmd {
             Ok(Command::Stop) => {
@@ -494,8 +492,7 @@ impl Service for CommandCenter {
                             info!("Worker {} exit code: {}", pid, code);
                             let err = ProcessError::from(code);
                             for srv in self.services.values_mut() {
-                                let _ = service::ProcessExited(
-                                    pid.clone(), err.clone()).send_to(srv);
+                                service::ProcessExited(pid.clone(), err.clone()).tell(srv);
                             }
                             continue
                         }
@@ -503,8 +500,7 @@ impl Service for CommandCenter {
                             info!("Worker {} exit by signal {:?}", pid, sig);
                             let err = ProcessError::Signal(sig as usize);
                             for srv in self.services.values_mut() {
-                                let _ = service::ProcessExited(
-                                    pid.clone(), err.clone()).send_to(srv);
+                                service::ProcessExited(pid.clone(), err.clone()).tell(srv);
                             }
                             continue
                         },
@@ -516,10 +512,10 @@ impl Service for CommandCenter {
             }
             Err(_) => {
                 self.exit(false);
-                return Ok(Async::Ready(()))
+                return ServiceResult::Done
             }
         }
 
-        Ok(Async::NotReady)
+        ServiceResult::NotReady
     }
 }

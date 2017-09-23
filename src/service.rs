@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std;
-use futures::{unsync, Async, Stream};
 use tokio_core::reactor;
 use nix::unistd::Pid;
 
@@ -12,32 +11,18 @@ use config::ServiceConfig;
 use worker::{Worker, WorkerMessage};
 use process::ProcessError;
 
-
-#[derive(PartialEq, Debug)]
-/// Service interface
-pub enum ServiceCommand {
-    // /// Gracefully reload workers
-    // Reload,
-    // /// Reconfigure active workers
-    // Configure(usize, String),
-    // /// Gracefully stopping workers
-    // Stop,
-    /// Quit all workers
-    Quit,
-}
-
 /// Service state
-#[derive(Debug)]
 enum ServiceState {
     Running,
     Failed,
     Stopped,
-    Starting(Task<StartStatus>),
-    Reloading(Task<ReloadStatus>),
-    Stopping(Task<()>),
+    Starting(ctx::Task<StartStatus>),
+    Reloading(ctx::Task<ReloadStatus>),
+    Stopping(ctx::Task<()>),
 }
 
 impl ServiceState {
+
     fn description(&self) -> &'static str {
         match *self {
             ServiceState::Running => "running",
@@ -72,12 +57,6 @@ pub enum ServiceOperationError {
     Failed,
 }
 
-#[derive(Debug)]
-pub enum ServiceMessage {
-    /// external command
-    Command(ServiceCommand),
-}
-
 #[derive(Clone, Debug)]
 pub enum StartStatus {
     Success,
@@ -97,23 +76,17 @@ pub struct FeService {
     state: ServiceState,
     paused: bool,
     workers: Vec<Worker>,
-    tx: unsync::mpsc::UnboundedSender<ServiceCommand>,
 }
 
 impl FeService {
 
-    pub fn start(handle: &reactor::Handle,
-                 num: u16,
-                 cfg: ServiceConfig) -> Address<FeService>
+    pub fn start(handle: &reactor::Handle, num: u16, cfg: ServiceConfig) -> Address<FeService>
     {
-        let (tx, rx) = unsync::mpsc::unbounded();
-
-        Builder::with_service_init(
-            rx.map(|cmd| ServiceMessage::Command(cmd)), handle,
-            move|ctx| {
+        Builder::with_default(
+            handle, move|ctx| {
                 let h = ctx.handle();
 
-                // create workers
+                // create4 workers
                 let mut workers = Vec::new();
                 for idx in 0..num as usize {
                     workers.push(Worker::new(idx, h, cfg.clone(), ctx.address()));
@@ -121,10 +94,9 @@ impl FeService {
 
                 FeService {
                     name: cfg.name.clone(),
-                    state: ServiceState::Starting(Task::new()),
+                    state: ServiceState::Starting(ctx::Task::new()),
                     paused: false,
-                    workers: workers,
-                    tx: tx}
+                    workers: workers}
             }).run()
     }
 
@@ -231,41 +203,13 @@ impl FeService {
 impl Service for FeService {
 
     type Context = Context<Self>;
-    type Message = Result<ServiceMessage, ()>;
-    type Result = Result<(), ()>;
+    type Message = DefaultMessage;
 
     fn start(&mut self, _: &mut Self::Context) {
         // start workers
         for worker in self.workers.iter_mut() {
             worker.start(Reason::Initial);
         }
-    }
-
-    fn finished(&mut self, _: &mut Self::Context) -> Result<Async<()>, ()> {
-        // command center probably dead
-        Ok(Async::Ready(()))
-    }
-
-    fn call(&mut self, _: &mut Self::Context,
-            cmd: Result<ServiceMessage, ()>) -> Result<Async<()>, ()>
-    {
-        match cmd {
-            // Ok(ServiceMessage::Command(ServiceCommand::Reload)) => {
-            //    let _ = ctx.reload(true);
-            //}
-            // CtxResult::Ok(ServiceCommand::Configure(_num, _exec)) => {
-            // }
-            // Ok(ServiceMessage::Command(ServiceCommand::Stop)) => {
-            //    let _ = ctx.stop(true);
-            // }
-            Ok(ServiceMessage::Command(ServiceCommand::Quit)) => {
-                // self.stop(ctx, false);
-            }
-            Err(_) =>
-                return Ok(Async::Ready(())), // command center probably dead
-        }
-
-        Ok(Async::NotReady)
     }
 }
 
@@ -403,7 +347,7 @@ impl Message for StartService {
             }
             ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Starting service: {:?}", srv.name);
-                let mut task = Task::new();
+                let mut task = ctx::Task::new();
                 let rx = task.wait();
                 srv.paused = false;
                 srv.state = ServiceState::Starting(task);
@@ -494,7 +438,7 @@ impl Message for ReloadService {
             }
             ServiceState::Running | ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Reloading service: {:?}", srv.name);
-                let mut task = Task::new();
+                let mut task = ctx::Task::new();
                 let rx = task.wait();
                 srv.paused = false;
                 srv.state = ServiceState::Reloading(task);
@@ -549,7 +493,7 @@ impl Message for StopService {
         }
 
         // stop workers
-        let mut task = Task::new();
+        let mut task = ctx::Task::new();
         let rx = task.wait();
         srv.paused = false;
         srv.state = ServiceState::Stopping(task);
@@ -567,30 +511,5 @@ impl Message for StopService {
                 Ok(_) => fut::ok(()),
                 Err(_) => fut::err(()),
             }))
-    }
-}
-
-
-#[derive(Debug)]
-struct Task<T> where T: Clone + std::fmt::Debug {
-    waiters: Vec<unsync::oneshot::Sender<T>>,
-}
-
-impl<T> Task<T> where T: Clone + std::fmt::Debug {
-
-    fn new() -> Task<T> {
-        Task { waiters: Vec::new() }
-    }
-
-    fn wait(&mut self) -> unsync::oneshot::Receiver<T> {
-        let (tx, rx) = unsync::oneshot::channel();
-        self.waiters.push(tx);
-        rx
-    }
-
-    fn set_result(self, result: T) {
-        for waiter in self.waiters {
-            let _ = waiter.send(result.clone());
-        }
     }
 }

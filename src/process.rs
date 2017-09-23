@@ -7,7 +7,7 @@ use std::os::unix::io::RawFd;
 use std::time::{Duration, Instant};
 
 use serde_json as json;
-use futures::{Async, Future};
+use futures::Future;
 use byteorder::{ByteOrder, BigEndian};
 use bytes::{BytesMut, BufMut};
 use tokio_core::reactor::{self, Timeout};
@@ -123,8 +123,7 @@ impl Process {
                 let pid = Pid::from_raw(-1);
                 service::ProcessFailed(
                     idx, pid,
-                    ProcessError::FailedToStart(Some(format!("{}", err))))
-                    .send_to(&addr);
+                    ProcessError::FailedToStart(Some(format!("{}", err)))).tell(&addr);
 
                 return (pid, None)
             }
@@ -136,9 +135,8 @@ impl Process {
 
         // start Process service
         let (r, w) = pipe.ctx_framed(TransportCodec, TransportCodec);
-        let addr = Builder::with_service_init(
-            r, handle,
-            move |ctx| Process {
+        let addr = Builder::with_init(
+            r, handle, move |ctx| Process {
                 idx: idx,
                 pid: pid,
                 state: ProcessState::Starting,
@@ -233,16 +231,14 @@ impl Service for Process {
 
     type Context = Context<Self>;
     type Message = Result<ProcessMessage, io::Error>;
-    type Result = Result<(), ()>;
 
-    fn finished(&mut self, ctx: &mut Self::Context) -> Result<Async<()>, ()>
+    fn finished(&mut self, ctx: &mut Self::Context) -> ServiceResult
     {
         self.kill(ctx);
-        Ok(Async::NotReady)
+        ServiceResult::NotReady
     }
 
-    fn call(&mut self, ctx: &mut Self::Context, msg: Self::Message)
-            -> Result<Async<()>, ()>
+    fn call(&mut self, ctx: &mut Self::Context, msg: Self::Message) -> ServiceResult
     {
         match msg {
             Ok(ProcessMessage::Message(msg)) => match msg {
@@ -254,7 +250,7 @@ impl Service for Process {
                     match self.state {
                         ProcessState::Starting => {
                             debug!("Worker loaded (pid:{})", self.pid);
-                            service::ProcessLoaded(self.idx, self.pid).send_to(&self.addr);
+                            service::ProcessLoaded(self.idx, self.pid).tell(&self.addr);
 
                             // start heartbeat timer
                             self.state = ProcessState::Running;
@@ -278,18 +274,18 @@ impl Service for Process {
                     // worker requests reload
                     info!("Worker requests reload (pid:{})", self.pid);
                     service::ProcessMessage(self.idx, self.pid, WorkerMessage::reload)
-                        .send_to(&self.addr);
+                        .tell(&self.addr);
                 }
                 WorkerMessage::restart => {
                     // worker requests reload
                     info!("Worker requests restart (pid:{})", self.pid);
                     service::ProcessMessage(self.idx, self.pid, WorkerMessage::restart)
-                        .send_to(&self.addr);
+                        .tell(&self.addr);
                 }
                 WorkerMessage::cfgerror(msg) => {
                     error!("Worker config error: {} (pid:{})", msg, self.pid);
                     service::ProcessFailed(self.idx, self.pid, ProcessError::ConfigError(msg))
-                        .send_to(&self.addr);
+                        .tell(&self.addr);
                 }
             }
             Ok(ProcessMessage::StartupTimeout) => {
@@ -297,11 +293,11 @@ impl Service for Process {
                     ProcessState::Starting => {
                         error!("Worker startup timeout after {} secs", self.startup_timeout);
                         service::ProcessFailed(self.idx, self.pid, ProcessError::StartupTimeout)
-                            .send_to(&self.addr);
+                            .tell(&self.addr);
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
-                        return Ok(Async::Ready(()))
+                        return ServiceResult::Done
                     },
                     _ => ()
                 }
@@ -311,11 +307,11 @@ impl Service for Process {
                     ProcessState::Stopping => {
                         info!("Worker shutdown timeout aftre {} secs", self.shutdown_timeout);
                         service::ProcessFailed(self.idx, self.pid, ProcessError::StopTimeout)
-                            .send_to(&self.addr);
+                            .tell(&self.addr);
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
-                        return Ok(Async::Ready(()))
+                        return ServiceResult::Done
                     },
                     _ => ()
                 }
@@ -328,7 +324,7 @@ impl Service for Process {
                         error!("Worker heartbeat failed (pid:{}) after {:?} secs",
                                self.pid, self.timeout);
                         service::ProcessFailed(self.idx, self.pid, ProcessError::Heartbeat)
-                            .send_to(&self.addr);
+                            .tell(&self.addr);
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
                         self.sink.send_buffered(WorkerCommand::hb);
@@ -342,11 +338,11 @@ impl Service for Process {
             }
             Ok(ProcessMessage::Kill) => {
                 let _ = kill(self.pid, Signal::SIGKILL);
-                return Ok(Async::Ready(()))
+                return ServiceResult::Done
             }
             Err(_) => self.kill(ctx),
         }
-        Ok(Async::NotReady)
+        ServiceResult::NotReady
     }
 }
 
@@ -434,12 +430,12 @@ impl Message for StopProcess {
                 } else {
                     // can not create timeout
                     let _ = kill(srv.pid, Signal::SIGQUIT);
-                    // return Ok(Async::Ready(()))
+                    ctx.set_done();
                 }
             },
             _ => {
                 let _ = kill(srv.pid, Signal::SIGQUIT);
-                // return Ok(Async::Ready(()))
+                ctx.set_done();
             }
         }
         Box::new(fut::ok(()))
