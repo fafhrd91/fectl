@@ -369,7 +369,7 @@ impl MessageHandler<SendCommand> for Process {
               -> MessageFuture<SendCommand, Self>
     {
         self.sink.send_buffered(msg.0);
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 
@@ -386,7 +386,7 @@ impl MessageHandler<StartProcess> for Process {
               -> MessageFuture<StartProcess, Self>
     {
         self.sink.send_buffered(WorkerCommand::start);
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 
@@ -403,7 +403,7 @@ impl MessageHandler<PauseProcess> for Process {
               -> MessageFuture<PauseProcess, Self>
     {
         self.sink.send_buffered(WorkerCommand::pause);
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 
@@ -420,7 +420,7 @@ impl MessageHandler<ResumeProcess> for Process {
               -> MessageFuture<ResumeProcess, Self>
     {
         self.sink.send_buffered(WorkerCommand::resume);
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 
@@ -458,7 +458,7 @@ impl MessageHandler<StopProcess> for Process {
                 ctx.set_done();
             }
         }
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 
@@ -476,7 +476,7 @@ impl MessageHandler<QuitProcess> for Process {
     {
         let _ = kill(self.pid, Signal::SIGQUIT);
         self.kill(ctx);
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 

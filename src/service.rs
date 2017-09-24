@@ -223,7 +223,7 @@ impl MessageHandler<ProcessMessage> for FeService {
     {
         self.workers[msg.0].message(msg.1, &msg.2);
         self.update();
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 
@@ -241,7 +241,7 @@ impl MessageHandler<ProcessFailed> for FeService {
     {
         self.workers[msg.0].exited(msg.1, &msg.2);
         self.update();
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 
@@ -259,7 +259,7 @@ impl MessageHandler<ProcessLoaded> for FeService {
     {
         self.workers[msg.0].loaded(msg.1);
         self.update();
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 
@@ -279,7 +279,7 @@ impl MessageHandler<ProcessExited> for FeService {
             worker.exited(msg.0, &msg.1);
         }
         self.update();
-        Box::new(fut::ok(()))
+        ().to_result()
     }
 }
 
@@ -301,7 +301,7 @@ impl MessageHandler<Pids> for FeService {
                 pids.push(format!("{}", pid));
             }
         }
-        Box::new(fut::ok(pids))
+        pids.to_result()
     }
 }
 
@@ -327,7 +327,7 @@ impl MessageHandler<Status> for FeService {
             ServiceState::Running => if self.paused { "paused" } else { "running" }
             _ => self.state.description()
         };
-        Box::new(fut::ok((status.to_owned(), events)))
+        (status.to_owned(), events).to_result()
     }
 }
 
@@ -345,11 +345,10 @@ impl MessageHandler<Start> for FeService {
     {
         match self.state {
             ServiceState::Starting(ref mut task) => {
-                Box::new(
-                    task.wait().ctxfuture().then(|res, _, _| match res {
-                        Ok(res) => fut::result(Ok(res)),
-                        Err(_) => fut::result(Err(ServiceOperationError::Failed)),
-                    }))
+                task.wait().ctxfuture().then(|res, _, _| match res {
+                    Ok(res) => fut::result(Ok(res)),
+                    Err(_) => fut::result(Err(ServiceOperationError::Failed)),
+                }).into()
             }
             ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Starting service: {:?}", self.name);
@@ -360,13 +359,12 @@ impl MessageHandler<Start> for FeService {
                 for worker in self.workers.iter_mut() {
                     worker.start(Reason::ConsoleRequest);
                 }
-                Box::new(
-                    rx.ctxfuture().then(|res, _, _| match res {
-                        Ok(res) => fut::result(Ok(res)),
-                        Err(_) => fut::result(Err(ServiceOperationError::Failed)),
-                }))
+                rx.ctxfuture().then(|res, _, _| match res {
+                    Ok(res) => fut::result(Ok(res)),
+                    Err(_) => fut::result(Err(ServiceOperationError::Failed)),
+                }).into()
             }
-            _ => Box::new(fut::result(Err(self.state.error())))
+            _ => self.state.error().to_error()
         }
     }
 }
@@ -383,18 +381,17 @@ impl MessageHandler<Pause> for FeService {
 
     fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> MessageFuture<Pause, Self>
     {
-        let res = match self.state {
+        match self.state {
             ServiceState::Running => {
                 debug!("Pause service: {:?}", self.name);
                 for worker in self.workers.iter_mut() {
                     worker.pause(Reason::ConsoleRequest);
                 }
                 self.paused = true;
-                Ok(())
+                ().to_result()
             }
-            _ => Err(self.state.error())
-        };
-        Box::new(fut::result(res))
+            _ => self.state.error().to_error()
+        }
     }
 }
 
@@ -410,18 +407,17 @@ impl MessageHandler<Resume> for FeService {
 
     fn handle(&mut self, _: Resume, _: &mut Context<Self>) -> MessageFuture<Resume, Self>
     {
-        let res = match self.state {
+        match self.state {
             ServiceState::Running => {
                 debug!("Resume service: {:?}", self.name);
                 for worker in self.workers.iter_mut() {
                     worker.resume(Reason::ConsoleRequest);
                 }
                 self.paused = false;
-                Ok(())
+                ().to_result()
             }
-            _ => Err(self.state.error())
-        };
-        Box::new(fut::result(res))
+            _ => self.state.error().to_error()
+        }
     }
 }
 
@@ -439,11 +435,10 @@ impl MessageHandler<Reload> for FeService {
     {
         match self.state {
             ServiceState::Reloading(ref mut task) => {
-                Box::new(
-                    task.wait().ctxfuture().then(|res, _, _| match res {
-                        Ok(res) => fut::result(Ok(res)),
-                        Err(_) => fut::result(Err(ServiceOperationError::Failed)),
-                    }))
+                task.wait().ctxfuture().then(|res, _, _| match res {
+                    Ok(res) => fut::result(Ok(res)),
+                    Err(_) => fut::result(Err(ServiceOperationError::Failed)),
+                }).into()
             }
             ServiceState::Running | ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Reloading service: {:?}", self.name);
@@ -454,13 +449,12 @@ impl MessageHandler<Reload> for FeService {
                 for worker in self.workers.iter_mut() {
                     worker.reload(msg.0, Reason::ConsoleRequest);
                 }
-                Box::new(
-                    rx.ctxfuture().then(|res, _, _| match res {
-                        Ok(res) => fut::result(Ok(res)),
-                        Err(_) => fut::result(Err(ServiceOperationError::Failed)),
-                    }))
+                rx.ctxfuture().then(|res, _, _| match res {
+                    Ok(res) => fut::result(Ok(res)),
+                    Err(_) => fut::result(Err(ServiceOperationError::Failed)),
+                }).into()
             }
-            _ => Box::new(fut::result(Err(self.state.error())))
+            _ => self.state.error().to_error()
         }
     }
 }
@@ -482,16 +476,16 @@ impl MessageHandler<Stop> for FeService {
         match state {
             ServiceState::Failed | ServiceState::Stopped => {
                 self.state = state;
-                return Box::new(fut::err(()))
+                return ().to_error()
             },
             ServiceState::Stopping(mut task) => {
                 let rx = task.wait();
                 self.state = ServiceState::Stopping(task);
-                return Box::new(
+                return
                     rx.ctxfuture().then(|res, _, _| match res {
                         Ok(_) => fut::ok(()),
                         Err(_) => fut::err(()),
-                    }));
+                    }).into();
             },
             ServiceState::Starting(task) => {
                 task.set(StartStatus::Stopping);
@@ -516,10 +510,9 @@ impl MessageHandler<Stop> for FeService {
         }
         self.update();
 
-        Box::new(
-            rx.ctxfuture().then(|res, _, _| match res {
-                Ok(_) => fut::ok(()),
-                Err(_) => fut::err(()),
-            }))
+        rx.ctxfuture().then(|res, _, _| match res {
+            Ok(_) => fut::ok(()),
+            Err(_) => fut::err(()),
+        }).into()
     }
 }

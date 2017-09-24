@@ -110,6 +110,6 @@ impl MessageHandler<Subscribe> for ProcessEvents {
               _: &mut Context<ProcessEvents>) -> MessageFuture<Subscribe, Self>
     {
         self.subscribers.push(msg.0);
-        Box::new(fut::ok(()))
+        fut::ok(()).into()
     }
 }
