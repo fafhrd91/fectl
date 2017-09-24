@@ -43,7 +43,7 @@ impl Service for Master {
                 let (r, w) = stream.ctx_framed(MasterTransportCodec, MasterTransportCodec);
                 MasterClient::from_context(
                     ctx, r, move |ctx| MasterClient{cmd: cmd,
-                                                    sink: ctx.add_sink(MasterClientSink, w)}
+                                                    sink: ctx.add_sink(w)}
                 );
             }
             _ => (),
@@ -58,9 +58,14 @@ impl Drop for Master {
     }
 }
 
+impl Message for MasterResponse {
+    type Item = ();
+    type Error = io::Error;
+}
+
 struct MasterClient {
     cmd: Address<CommandCenter>,
-    sink: Sink<MasterClientSink>,
+    sink: ctx::Sink<MasterResponse>,
 }
 
 #[derive(Debug)]
@@ -75,7 +80,7 @@ impl MasterClient {
             .unwrap()
             .ctxfuture()
             .then(|_, srv: &mut MasterClient, ctx: &mut Context<Self>| {
-                srv.sink.send_buffered(MasterResponse::Pong);
+                srv.sink.send(MasterResponse::Pong);
                 srv.hb(ctx);
                 fut::ok(())
             });
@@ -85,24 +90,24 @@ impl MasterClient {
     fn handle_error(&mut self, err: CommandError) {
         match err {
             CommandError::NotReady =>
-                self.sink.send_buffered(MasterResponse::ErrorNotReady),
+                self.sink.send(MasterResponse::ErrorNotReady),
             CommandError::UnknownService =>
-                self.sink.send_buffered(MasterResponse::ErrorUnknownService),
+                self.sink.send(MasterResponse::ErrorUnknownService),
             CommandError::ServiceStopped =>
-                self.sink.send_buffered(MasterResponse::ErrorServiceStopped),
+                self.sink.send(MasterResponse::ErrorServiceStopped),
             CommandError::Service(err) => match err {
                 ServiceOperationError::Starting =>
-                    self.sink.send_buffered(MasterResponse::ErrorServiceStarting),
+                    self.sink.send(MasterResponse::ErrorServiceStarting),
                 ServiceOperationError::Reloading =>
-                    self.sink.send_buffered(MasterResponse::ErrorServiceReloading),
+                    self.sink.send(MasterResponse::ErrorServiceReloading),
                 ServiceOperationError::Stopping =>
-                    self.sink.send_buffered(MasterResponse::ErrorServiceStopping),
+                    self.sink.send(MasterResponse::ErrorServiceStopping),
                 ServiceOperationError::Running =>
-                    self.sink.send_buffered(MasterResponse::ErrorServiceRunning),
+                    self.sink.send(MasterResponse::ErrorServiceRunning),
                 ServiceOperationError::Stopped =>
-                    self.sink.send_buffered(MasterResponse::ErrorServiceStopped),
+                    self.sink.send(MasterResponse::ErrorServiceStopped),
                 ServiceOperationError::Failed =>
-                    self.sink.send_buffered(MasterResponse::ErrorServiceFailed),
+                    self.sink.send(MasterResponse::ErrorServiceFailed),
             }
         }
     }
@@ -116,11 +121,11 @@ impl MasterClient {
                     Err(_) => (),
                     Ok(Err(err)) => match err {
                         CommandError::ServiceStopped =>
-                            srv.sink.send_buffered(MasterResponse::ServiceStarted),
+                            srv.sink.send(MasterResponse::ServiceStarted),
                         _ => srv.handle_error(err),
                     }
                     Ok(Ok(_)) =>
-                        srv.sink.send_buffered(MasterResponse::ServiceStopped),
+                        srv.sink.send(MasterResponse::ServiceStopped),
                 };
                 fut::ok(())
             }).spawn(ctx);
@@ -137,11 +142,11 @@ impl MasterClient {
                     Ok(Err(err)) => srv.handle_error(err),
                     Ok(Ok(res)) => match res {
                         ReloadStatus::Success =>
-                            srv.sink.send_buffered(MasterResponse::ServiceStarted),
+                            srv.sink.send(MasterResponse::ServiceStarted),
                         ReloadStatus::Failed =>
-                            srv.sink.send_buffered(MasterResponse::ServiceFailed),
+                            srv.sink.send(MasterResponse::ServiceFailed),
                         ReloadStatus::Stopping =>
-                            srv.sink.send_buffered(MasterResponse::ErrorServiceStopping),
+                            srv.sink.send(MasterResponse::ErrorServiceStopping),
                     }
                 }
                 fut::ok(())
@@ -158,11 +163,11 @@ impl MasterClient {
                     Ok(Err(err)) => srv.handle_error(err),
                     Ok(Ok(res)) => match res {
                         StartStatus::Success =>
-                            srv.sink.send_buffered(MasterResponse::ServiceStarted),
+                            srv.sink.send(MasterResponse::ServiceStarted),
                         StartStatus::Failed =>
-                            srv.sink.send_buffered(MasterResponse::ServiceFailed),
+                            srv.sink.send(MasterResponse::ServiceFailed),
                         StartStatus::Stopping =>
-                            srv.sink.send_buffered(MasterResponse::ErrorServiceStopping),
+                            srv.sink.send(MasterResponse::ErrorServiceStopping),
                     }
                 }
                 fut::ok(())
@@ -170,13 +175,7 @@ impl MasterClient {
     }
 }
 
-struct MasterClientSink;
-
-impl SinkService for MasterClientSink {
-
-    type Service = MasterClient;
-    type SinkMessage = Result<MasterResponse, io::Error>;
-}
+//type SinkMessage = Result<MasterResponse, io::Error>;
 
 impl Service for MasterClient {
 
@@ -192,7 +191,7 @@ impl Service for MasterClient {
             Ok(MasterClientMessage::Request(req)) => {
                 match req {
                     MasterRequest::Ping =>
-                        self.sink.send_buffered(MasterResponse::Pong),
+                        self.sink.send(MasterResponse::Pong),
                     MasterRequest::Start(name) =>
                         self.start_service(name, ctx),
                     MasterRequest::Reload(name) =>
@@ -208,7 +207,7 @@ impl Service for MasterClient {
                                 match res {
                                     Err(_) => (),
                                     Ok(Err(err)) => srv.handle_error(err),
-                                    Ok(Ok(_)) => srv.sink.send_buffered(MasterResponse::Done),
+                                    Ok(Ok(_)) => srv.sink.send(MasterResponse::Done),
                                 };
                                 fut::ok(())
                             }).spawn(ctx);
@@ -220,7 +219,7 @@ impl Service for MasterClient {
                                 match res {
                                     Err(_) => (),
                                     Ok(Err(err)) => srv.handle_error(err),
-                                    Ok(Ok(_)) => srv.sink.send_buffered(MasterResponse::Done),
+                                    Ok(Ok(_)) => srv.sink.send(MasterResponse::Done),
                                 };
                                 fut::ok(())
                             }).spawn(ctx);
@@ -232,7 +231,7 @@ impl Service for MasterClient {
                                 match res {
                                     Err(_) => (),
                                     Ok(Err(err)) => srv.handle_error(err),
-                                    Ok(Ok(status)) => srv.sink.send_buffered(
+                                    Ok(Ok(status)) => srv.sink.send(
                                         MasterResponse::ServiceStatus(status)),
                                 };
                                 fut::ok(())
@@ -245,24 +244,24 @@ impl Service for MasterClient {
                                 match res {
                                     Err(_) => (),
                                     Ok(Err(err)) => srv.handle_error(err),
-                                    Ok(Ok(pids)) => srv.sink.send_buffered(
+                                    Ok(Ok(pids)) => srv.sink.send(
                                         MasterResponse::ServiceWorkerPids(pids)),
                                 };
                                 fut::ok(())
                             }).spawn(ctx);
                     }
                     MasterRequest::Pid => {
-                        self.sink.send_buffered(MasterResponse::Pid(
+                        self.sink.send(MasterResponse::Pid(
                             format!("{}", nix::unistd::getpid())));
                     },
                     MasterRequest::Version => {
-                        self.sink.send_buffered(MasterResponse::Version(
+                        self.sink.send(MasterResponse::Version(
                             format!("{} {}", PKG_INFO.name, PKG_INFO.version)));
                     },
                     MasterRequest::Quit => {
                         self.cmd.call(cmd::Stop)
                             .then(|_, srv: &mut MasterClient, _| {
-                                srv.sink.send_buffered(MasterResponse::Done);
+                                srv.sink.send(MasterResponse::Done);
                                 fut::ok(())
                             }).spawn(ctx);
                     }

@@ -38,7 +38,12 @@ pub struct Process {
     timeout: Duration,
     startup_timeout: u64,
     shutdown_timeout: u64,
-    sink: Sink<ProcessSink>,
+    sink: ctx::Sink<WorkerCommand>,
+}
+
+impl Message for WorkerCommand {
+    type Item = ();
+    type Error = io::Error;
 }
 
 #[derive(Debug)]
@@ -153,7 +158,7 @@ impl Process {
                     timeout: timeout,
                     startup_timeout: startup_timeout,
                     shutdown_timeout: shutdown_timeout,
-                    sink: ctx.add_sink(ProcessSink, w)
+                    sink: ctx.add_sink(w)
                 }
             });
 
@@ -223,14 +228,6 @@ impl Drop for Process {
     }
 }
 
-struct ProcessSink;
-
-impl SinkService for ProcessSink {
-
-    type Service = Process;
-    type SinkMessage = Result<WorkerCommand, io::Error>;
-}
-
 impl Service for Process {
 
     type Message = Result<ProcessMessage, io::Error>;
@@ -247,7 +244,7 @@ impl Service for Process {
             Ok(ProcessMessage::Message(msg)) => match msg {
                 WorkerMessage::forked => {
                     debug!("Worker forked (pid:{})", self.pid);
-                    self.sink.send_buffered(WorkerCommand::prepare);
+                    self.sink.send(WorkerCommand::prepare);
                 }
                 WorkerMessage::loaded => {
                     match self.state {
@@ -337,7 +334,7 @@ impl Service for Process {
                                 self.idx, self.pid, ProcessError::Heartbeat));
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
-                        self.sink.send_buffered(WorkerCommand::hb);
+                        self.sink.send(WorkerCommand::hb);
                         let fut = Box::new(
                                 Timeout::new(Duration::new(HEARTBEAT, 0), ctx.handle())
                                     .unwrap()
@@ -368,7 +365,7 @@ impl MessageHandler<SendCommand> for Process {
     fn handle(&mut self, msg: SendCommand, _: &mut Context<Process>)
               -> MessageFuture<SendCommand, Self>
     {
-        self.sink.send_buffered(msg.0);
+        self.sink.send(msg.0);
         ().to_result()
     }
 }
@@ -385,7 +382,7 @@ impl MessageHandler<StartProcess> for Process {
     fn handle(&mut self, _: StartProcess, _: &mut Context<Process>)
               -> MessageFuture<StartProcess, Self>
     {
-        self.sink.send_buffered(WorkerCommand::start);
+        self.sink.send(WorkerCommand::start);
         ().to_result()
     }
 }
@@ -402,7 +399,7 @@ impl MessageHandler<PauseProcess> for Process {
     fn handle(&mut self, _: PauseProcess, _: &mut Context<Process>)
               -> MessageFuture<PauseProcess, Self>
     {
-        self.sink.send_buffered(WorkerCommand::pause);
+        self.sink.send(WorkerCommand::pause);
         ().to_result()
     }
 }
@@ -419,7 +416,7 @@ impl MessageHandler<ResumeProcess> for Process {
     fn handle(&mut self, _: ResumeProcess, _: &mut Context<Process>)
               -> MessageFuture<ResumeProcess, Self>
     {
-        self.sink.send_buffered(WorkerCommand::resume);
+        self.sink.send(WorkerCommand::resume);
         ().to_result()
     }
 }
@@ -439,7 +436,7 @@ impl MessageHandler<StopProcess> for Process {
         info!("Stopping worker: (pid:{})", self.pid);
         match self.state {
             ProcessState::Running => {
-                self.sink.send_buffered(WorkerCommand::stop);
+                self.sink.send(WorkerCommand::stop);
 
                 self.state = ProcessState::Stopping;
                 if let Ok(timeout) = Timeout::new(

@@ -55,8 +55,8 @@ serde_json = "*"
 serde_derive = "*"
 
 [dependencies.ctx]
-path = "../ctx"
-#git = "https://github.com/fafhrd91/ctx.git"
+#path = "../ctx"
+git = "https://github.com/fafhrd91/ctx.git"
 
 [profile.release]
 lto = true
