@@ -61,9 +61,9 @@ impl CommandCenter {
         }
 
         if success {
-            self.system.tell(ctx::SystemExit(0));
+            self.system.send(ctx::SystemExit(0));
         } else {
-            self.system.tell(ctx::SystemExit(0));
+            self.system.send(ctx::SystemExit(0));
         }
     }
 
@@ -75,7 +75,7 @@ impl CommandCenter {
             self.state = State::Stopping;
             for service in self.services.values() {
                 self.stopping += 1;
-                service.send(service::Stop(graceful, Reason::Exit))
+                service.call(service::Stop(graceful, Reason::Exit))
                     .then(|res, srv: &mut CommandCenter, _: &mut Context<Self>| {
                         srv.stopping -= 1;
                         let exit = srv.stopping == 0;
@@ -109,7 +109,7 @@ impl MessageHandler<ServicePids> for CommandCenter {
             State::Running => {
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.send(service::Pids).then(|res, _, _| match res {
+                        service.call(service::Pids).then(|res, _, _| match res {
                             Ok(Ok(status)) => fut::ok(status),
                             _ => fut::err(CommandError::UnknownService)
                         }).into(),
@@ -169,7 +169,7 @@ impl MessageHandler<StartService> for CommandCenter {
                 info!("Starting service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.send(service::Start)
+                        service.call(service::Start)
                             .then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -204,7 +204,7 @@ impl MessageHandler<StopService> for CommandCenter {
                 info!("Stopping service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.send(service::Stop(msg.1, Reason::ConsoleRequest))
+                        service.call(service::Stop(msg.1, Reason::ConsoleRequest))
                             .then(|res, _, _| match res {
                                 Ok(Ok(_)) => fut::ok(()),
                                 _ => fut::err(CommandError::ServiceStopped),
@@ -237,7 +237,7 @@ impl MessageHandler<StatusService> for CommandCenter {
             State::Running => {
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.send(service::Status)
+                        service.call(service::Status)
                             .then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 _ => fut::err(CommandError::UnknownService)
@@ -269,7 +269,7 @@ impl MessageHandler<PauseService> for CommandCenter {
                 info!("Pause service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.send(service::Pause)
+                        service.call(service::Pause)
                             .then(|res, _, _| match res {
                                 Ok(Ok(_)) => fut::ok(()),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -304,7 +304,7 @@ impl MessageHandler<ResumeService> for CommandCenter {
                 info!("Resume service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.send(service::Resume)
+                        service.call(service::Resume)
                         .then(|res, _, _| match res {
                             Ok(Ok(_)) => fut::ok(()),
                             Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -340,7 +340,7 @@ impl MessageHandler<ReloadService> for CommandCenter {
                 let graceful = msg.1;
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.send(service::Reload(graceful))
+                        service.call(service::Reload(graceful))
                         .then(|res, _, _| match res {
                             Ok(Ok(status)) => fut::ok(status),
                             Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -373,9 +373,7 @@ impl MessageHandler<ReloadAll> for CommandCenter {
             State::Running => {
                 info!("reloading all services");
                 for srv in self.services.values() {
-                    srv.tell(
-                        service::Reload(true)
-                    );
+                    srv.send(service::Reload(true));
                 }
             }
             _ => warn!("Can not reload in system in `{:?}` state", self.state)
@@ -416,7 +414,7 @@ impl MessageHandler<ProcessEvent> for CommandCenter {
                             info!("Worker {} exit code: {}", pid, code);
                             let err = ProcessError::from(code);
                             for srv in self.services.values_mut() {
-                                srv.tell(
+                                srv.send(
                                     service::ProcessExited(pid.clone(), err.clone())
                                 );
                             }
@@ -426,7 +424,7 @@ impl MessageHandler<ProcessEvent> for CommandCenter {
                             info!("Worker {} exit by signal {:?}", pid, sig);
                             let err = ProcessError::Signal(sig as usize);
                             for srv in self.services.values_mut() {
-                                srv.tell(
+                                srv.send(
                                     service::ProcessExited(pid.clone(), err.clone())
                                 );
                             }

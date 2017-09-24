@@ -110,7 +110,7 @@ impl MasterClient {
     fn stop(&mut self, name: String, ctx: &mut Context<Self>) {
         info!("Client command: Stop service '{}'", name);
 
-        self.cmd.send(cmd::StopService(name, true))
+        self.cmd.call(cmd::StopService(name, true))
             .then(|res, srv: &mut MasterClient, _| {
                 match res {
                     Err(_) => (),
@@ -130,7 +130,7 @@ impl MasterClient {
     {
         info!("Client command: Reload service '{}'", name);
 
-        self.cmd.send(cmd::ReloadService(name, graceful))
+        self.cmd.call(cmd::ReloadService(name, graceful))
             .then(|res, srv: &mut MasterClient, _| {
                 match res {
                     Err(_) => (),
@@ -151,7 +151,7 @@ impl MasterClient {
     fn start_service(&mut self, name: String, ctx: &mut Context<Self>) {
         info!("Client command: Start service '{}'", name);
 
-        self.cmd.send(cmd::StartService(name))
+        self.cmd.call(cmd::StartService(name))
             .then(|res, srv: &mut MasterClient, _| {
                 match res {
                     Err(_) => (),
@@ -203,7 +203,7 @@ impl Service for MasterClient {
                         self.stop(name, ctx),
                     MasterRequest::Pause(name) => {
                         info!("Client command: Pause service '{}'", name);
-                        self.cmd.send(cmd::PauseService(name))
+                        self.cmd.call(cmd::PauseService(name))
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -215,7 +215,7 @@ impl Service for MasterClient {
                     }
                     MasterRequest::Resume(name) => {
                         info!("Client command: Resume service '{}'", name);
-                        self.cmd.send(cmd::ResumeService(name))
+                        self.cmd.call(cmd::ResumeService(name))
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -227,7 +227,7 @@ impl Service for MasterClient {
                     }
                     MasterRequest::Status(name) => {
                         debug!("Client command: Service status '{}'", name);
-                        self.cmd.send(cmd::StatusService(name))
+                        self.cmd.call(cmd::StatusService(name))
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -240,7 +240,7 @@ impl Service for MasterClient {
                     }
                     MasterRequest::SPid(name) => {
                         debug!("Client command: Service status '{}'", name);
-                        self.cmd.send(cmd::ServicePids(name))
+                        self.cmd.call(cmd::ServicePids(name))
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -260,7 +260,7 @@ impl Service for MasterClient {
                             format!("{} {}", PKG_INFO.name, PKG_INFO.version)));
                     },
                     MasterRequest::Quit => {
-                        self.cmd.send(cmd::Stop)
+                        self.cmd.call(cmd::Stop)
                             .then(|_, srv: &mut MasterClient, _| {
                                 srv.sink.send_buffered(MasterResponse::Done);
                                 fut::ok(())
@@ -462,7 +462,7 @@ pub fn start(cfg: Config) -> bool {
 
     // command center
     let cmd = CommandCenter::start(cfg.clone());
-    events.tell(signals::Subscribe(cmd.subscriber()));
+    events.send(signals::Subscribe(cmd.subscriber()));
 
     // start uds master server
     Master{cfg: cfg, cmd: cmd}.start_with(lst.incoming());

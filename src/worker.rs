@@ -61,27 +61,27 @@ struct ProcessInfo {
 impl ProcessInfo {
     fn stop(&self) {
         if let Some(ref addr) = self.addr {
-            addr.tell(process::StopProcess);
+            addr.send(process::StopProcess);
         }
     }
     fn quit(&self) {
         if let Some(ref addr) = self.addr {
-            addr.tell(process::QuitProcess);
+            addr.send(process::QuitProcess);
         }
     }
     fn start(&self) {
         if let Some(ref addr) = self.addr {
-            addr.tell(process::StartProcess);
+            addr.send(process::StartProcess);
         }
     }
     fn pause(&self) {
         if let Some(ref addr) = self.addr {
-            addr.tell(process::PauseProcess);
+            addr.send(process::PauseProcess);
         }
     }
     fn resume(&self) {
         if let Some(ref addr) = self.addr {
-            addr.tell(process::ResumeProcess);
+            addr.send(process::ResumeProcess);
         }
     }
 }

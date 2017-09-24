@@ -121,7 +121,7 @@ impl Process {
             Ok(res) => res,
             Err(err) => {
                 let pid = Pid::from_raw(-1);
-                addr.tell(
+                addr.send(
                     service::ProcessFailed(
                         idx, pid,
                         ProcessError::FailedToStart(Some(format!("{}", err)))));
@@ -253,7 +253,7 @@ impl Service for Process {
                     match self.state {
                         ProcessState::Starting => {
                             debug!("Worker loaded (pid:{})", self.pid);
-                            self.addr.tell(
+                            self.addr.send(
                                 service::ProcessLoaded(self.idx, self.pid));
 
                             // start heartbeat timer
@@ -277,20 +277,20 @@ impl Service for Process {
                 WorkerMessage::reload => {
                     // worker requests reload
                     info!("Worker requests reload (pid:{})", self.pid);
-                    self.addr.tell(
+                    self.addr.send(
                         service::ProcessMessage(
                             self.idx, self.pid, WorkerMessage::reload));
                 }
                 WorkerMessage::restart => {
                     // worker requests reload
                     info!("Worker requests restart (pid:{})", self.pid);
-                    self.addr.tell(
+                    self.addr.send(
                         service::ProcessMessage(
                             self.idx, self.pid, WorkerMessage::restart));
                 }
                 WorkerMessage::cfgerror(msg) => {
                     error!("Worker config error: {} (pid:{})", msg, self.pid);
-                    self.addr.tell(
+                    self.addr.send(
                         service::ProcessFailed(
                             self.idx, self.pid, ProcessError::ConfigError(msg)));
                 }
@@ -299,7 +299,7 @@ impl Service for Process {
                 match self.state {
                     ProcessState::Starting => {
                         error!("Worker startup timeout after {} secs", self.startup_timeout);
-                        self.addr.tell(
+                        self.addr.send(
                             service::ProcessFailed(
                                 self.idx, self.pid, ProcessError::StartupTimeout));
 
@@ -314,7 +314,7 @@ impl Service for Process {
                 match self.state {
                     ProcessState::Stopping => {
                         info!("Worker shutdown timeout aftre {} secs", self.shutdown_timeout);
-                        self.addr.tell(
+                        self.addr.send(
                             service::ProcessFailed(
                                 self.idx, self.pid, ProcessError::StopTimeout));
 
@@ -332,7 +332,7 @@ impl Service for Process {
                         // heartbeat timed out
                         error!("Worker heartbeat failed (pid:{}) after {:?} secs",
                                self.pid, self.timeout);
-                        self.addr.tell(
+                        self.addr.send(
                             service::ProcessFailed(
                                 self.idx, self.pid, ProcessError::Heartbeat));
                     } else {

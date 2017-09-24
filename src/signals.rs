@@ -87,7 +87,7 @@ impl Service for ProcessEvents {
         match msg {
             Ok(ev) => {
                 for subscr in self.subscribers.iter() {
-                    subscr.tell(ProcessEvent(ev))
+                    subscr.send(ProcessEvent(ev))
                 }
                 ServiceResult::NotReady
             }
@@ -110,6 +110,6 @@ impl MessageHandler<Subscribe> for ProcessEvents {
               _: &mut Context<ProcessEvents>) -> MessageFuture<Subscribe, Self>
     {
         self.subscribers.push(msg.0);
-        fut::ok(()).into()
+        ().to_result()
     }
 }
