@@ -11,8 +11,6 @@ use libc;
 use serde_json as json;
 use byteorder::{BigEndian , ByteOrder};
 use bytes::{BytesMut, BufMut};
-use futures::unsync;
-use tokio_core::reactor;
 use tokio_core::reactor::Timeout;
 use tokio_uds::{UnixStream, UnixListener};
 use tokio_io::codec::{Encoder, Decoder};
@@ -21,6 +19,7 @@ use ctx::prelude::*;
 
 use client;
 use logging;
+use signals;
 use config::Config;
 use version::PKG_INFO;
 use cmd::{self, CommandCenter, CommandError};
@@ -34,60 +33,22 @@ pub struct Master {
 
 impl Service for Master {
 
-    type Context = Context<Self>;
     type Message = Result<(UnixStream, std::os::unix::net::SocketAddr), io::Error>;
 
-    fn call(&mut self, ctx: &mut Self::Context, msg: Self::Message) -> ServiceResult
+    fn call(&mut self, ctx: &mut Context<Self>, msg: Self::Message) -> ServiceResult
     {
         match msg {
             Ok((stream, _)) => {
                 let cmd = self.cmd.clone();
                 let (r, w) = stream.ctx_framed(MasterTransportCodec, MasterTransportCodec);
-                Builder::from_context(
+                MasterClient::from_context(
                     ctx, r, move |ctx| MasterClient{cmd: cmd,
                                                     sink: ctx.add_sink(MasterClientSink, w)}
-                ).run();
+                );
             }
             _ => (),
         }
         ServiceResult::NotReady
-    }
-}
-
-impl Master {
-
-    pub fn start(cfg: Config, lst: StdUnixListener) -> bool {
-        let cfg = Rc::new(cfg);
-
-        // create core
-        let mut core = reactor::Core::new().unwrap();
-        let handle = core.handle();
-
-        // create uds stream
-        let lst = match UnixListener::from_listener(lst, &handle) {
-            Ok(lst) => lst,
-            Err(err) => {
-                error!("Can not create unix socket listener {:?}", err);
-                return false
-            }
-        };
-
-        // command center
-        let (stop_tx, stop_rx) = unsync::oneshot::channel();
-        let cmd = CommandCenter::start(cfg.clone(), &handle, stop_tx);
-
-        // start uds master server
-        let master = Master {
-            cfg: cfg,
-            cmd: cmd,
-        };
-        Builder::build(master, lst.incoming(), &handle).run();
-
-        // run loop
-        match core.run(stop_rx) {
-            Ok(success) => success,
-            Err(_) => false,
-        }
     }
 }
 
@@ -149,7 +110,7 @@ impl MasterClient {
     fn stop(&mut self, name: String, ctx: &mut Context<Self>) {
         info!("Client command: Stop service '{}'", name);
 
-        cmd::StopService(name, true).send(&self.cmd).ctxfuture()
+        self.cmd.send(cmd::StopService(name, true))
             .then(|res, srv: &mut MasterClient, _| {
                 match res {
                     Err(_) => (),
@@ -169,7 +130,7 @@ impl MasterClient {
     {
         info!("Client command: Reload service '{}'", name);
 
-        cmd::ReloadService(name, graceful).send(&self.cmd).ctxfuture()
+        self.cmd.send(cmd::ReloadService(name, graceful))
             .then(|res, srv: &mut MasterClient, _| {
                 match res {
                     Err(_) => (),
@@ -190,7 +151,7 @@ impl MasterClient {
     fn start_service(&mut self, name: String, ctx: &mut Context<Self>) {
         info!("Client command: Start service '{}'", name);
 
-        cmd::StartService(name).send(&self.cmd).ctxfuture()
+        self.cmd.send(cmd::StartService(name))
             .then(|res, srv: &mut MasterClient, _| {
                 match res {
                     Err(_) => (),
@@ -219,14 +180,13 @@ impl SinkService for MasterClientSink {
 
 impl Service for MasterClient {
 
-    type Context = Context<Self>;
     type Message = Result<MasterClientMessage, io::Error>;
 
-    fn start(&mut self, ctx: &mut Self::Context) {
+    fn start(&mut self, ctx: &mut Context<Self>) {
         self.hb(ctx);
     }
 
-    fn call(&mut self, ctx: &mut Self::Context, msg: Self::Message) -> ServiceResult
+    fn call(&mut self, ctx: &mut Context<Self>, msg: Self::Message) -> ServiceResult
     {
         match msg {
             Ok(MasterClientMessage::Request(req)) => {
@@ -243,7 +203,7 @@ impl Service for MasterClient {
                         self.stop(name, ctx),
                     MasterRequest::Pause(name) => {
                         info!("Client command: Pause service '{}'", name);
-                        cmd::PauseService(name).send(&self.cmd).ctxfuture()
+                        self.cmd.send(cmd::PauseService(name))
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -255,7 +215,7 @@ impl Service for MasterClient {
                     }
                     MasterRequest::Resume(name) => {
                         info!("Client command: Resume service '{}'", name);
-                        cmd::ResumeService(name).send(&self.cmd).ctxfuture()
+                        self.cmd.send(cmd::ResumeService(name))
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -267,7 +227,7 @@ impl Service for MasterClient {
                     }
                     MasterRequest::Status(name) => {
                         debug!("Client command: Service status '{}'", name);
-                        cmd::StatusService(name).send(&self.cmd).ctxfuture()
+                        self.cmd.send(cmd::StatusService(name))
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -280,7 +240,7 @@ impl Service for MasterClient {
                     }
                     MasterRequest::SPid(name) => {
                         debug!("Client command: Service status '{}'", name);
-                        cmd::ServicePids(name).send(&self.cmd).ctxfuture()
+                        self.cmd.send(cmd::ServicePids(name))
                             .then(|res, srv: &mut MasterClient, _| {
                                 match res {
                                     Err(_) => (),
@@ -300,7 +260,7 @@ impl Service for MasterClient {
                             format!("{} {}", PKG_INFO.name, PKG_INFO.version)));
                     },
                     MasterRequest::Quit => {
-                        cmd::Stop.send(&self.cmd).ctxfuture()
+                        self.cmd.send(cmd::Stop)
                             .then(|_, srv: &mut MasterClient, _| {
                                 srv.sink.send_buffered(MasterResponse::Done);
                                 fut::ok(())
@@ -485,12 +445,31 @@ pub fn start(cfg: Config) -> bool {
         nix::sys::stat::umask(nix::sys::stat::Mode::from_bits(0o22).unwrap());
     }
 
-    // start
-    let result = Master::start(cfg, lst);
+    let sys = ctx::init_system();
+    let cfg = Rc::new(cfg);
+
+    // create uds stream
+    let lst = match UnixListener::from_listener(lst, ctx::get_handle()) {
+        Ok(lst) => lst,
+        Err(err) => {
+            error!("Can not create unix socket listener {:?}", err);
+            return false
+        }
+    };
+
+    // signals
+    let events = signals::ProcessEvents::start();
+
+    // command center
+    let cmd = CommandCenter::start(cfg.clone());
+    events.tell(signals::Subscribe(cmd.subscriber()));
+
+    // start uds master server
+    Master{cfg: cfg, cmd: cmd}.start_with(lst.incoming());
 
     if !daemon {
         println!("");
     }
-
-    result
+    sys.run();
+    true
 }

@@ -2,8 +2,6 @@ use std;
 use std::time::{Duration, Instant};
 
 use nix::unistd::Pid;
-use tokio_core::reactor;
-
 use ctx::prelude::*;
 
 use utils::str;
@@ -63,27 +61,27 @@ struct ProcessInfo {
 impl ProcessInfo {
     fn stop(&self) {
         if let Some(ref addr) = self.addr {
-            process::StopProcess.tell(addr);
+            addr.tell(process::StopProcess);
         }
     }
     fn quit(&self) {
         if let Some(ref addr) = self.addr {
-            process::QuitProcess.tell(addr);
+            addr.tell(process::QuitProcess);
         }
     }
     fn start(&self) {
         if let Some(ref addr) = self.addr {
-            process::StartProcess.tell(addr);
+            addr.tell(process::StartProcess);
         }
     }
     fn pause(&self) {
         if let Some(ref addr) = self.addr {
-            process::PauseProcess.tell(addr);
+            addr.tell(process::PauseProcess);
         }
     }
     fn resume(&self) {
         if let Some(ref addr) = self.addr {
-            process::ResumeProcess.tell(addr);
+            addr.tell(process::ResumeProcess);
         }
     }
 }
@@ -92,7 +90,6 @@ pub struct Worker {
     pub idx: usize,
     cfg: ServiceConfig,
     state: WorkerState,
-    handle: reactor::Handle,
     pub events: Events,
     pub restore_from_fail: bool,
     started: Instant,
@@ -102,14 +99,12 @@ pub struct Worker {
 
 impl Worker {
 
-    pub fn new(idx: usize, handle: &reactor::Handle, cfg: ServiceConfig,
-               addr: Address<FeService>) -> Worker
+    pub fn new(idx: usize, cfg: ServiceConfig, addr: Address<FeService>) -> Worker
     {
         Worker {
             idx: idx,
             cfg: cfg,
             state: WorkerState::Initial,
-            handle: handle.clone(),
             events: Events::new(50),
             started: Instant::now(),
             restore_from_fail: false,
@@ -122,8 +117,7 @@ impl Worker {
         match self.state {
             WorkerState::Initial | WorkerState::Stopped | WorkerState::Failed => {
                 debug!("Starting worker process id: {:?}", id);
-                let (pid, addr) = Process::start(
-                    self.idx, &self.handle, &self.cfg, self.addr.clone());
+                let (pid, addr) = Process::start(self.idx, &self.cfg, self.addr.clone());
                 self.state = WorkerState::Starting(ProcessInfo{pid: pid, addr: addr});
                 self.events.add(State::Starting, reason, str(pid));
             }
@@ -212,8 +206,7 @@ impl Worker {
         match state {
             WorkerState::Running(process) => {
                 // start new worker
-                let (pid, addr) = Process::start(
-                    self.idx, &self.handle, &self.cfg, self.addr.clone());
+                let (pid, addr) = Process::start(self.idx, &self.cfg, self.addr.clone());
                 let info = ProcessInfo{pid: pid, addr: addr};
 
                 if graceful {
@@ -459,8 +452,7 @@ impl Worker {
 
                     if self.restarts < self.cfg.restarts {
                         // start new worker
-                        let (pid, addr) = Process::start(
-                            self.idx, &self.handle, &self.cfg, self.addr.clone());
+                        let (pid, addr) = Process::start(self.idx, &self.cfg, self.addr.clone());
                         let info = ProcessInfo{pid: pid, addr: addr};
                         self.state = WorkerState::Reloading(info, old_proc);
                     } else {
@@ -517,7 +509,7 @@ impl Worker {
                     if self.restarts < self.cfg.restarts {
                         // start new worker
                         let (pid, addr) = Process::start(
-                            self.idx, &self.handle, &self.cfg, self.addr.clone());
+                            self.idx, &self.cfg, self.addr.clone());
                         let info = ProcessInfo{pid: pid, addr: addr};
                         self.state = WorkerState::Restarting(info, old_proc);
                     } else {

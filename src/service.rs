@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std;
-use tokio_core::reactor;
 use nix::unistd::Pid;
 
 use ctx::prelude::*;
@@ -16,9 +15,9 @@ enum ServiceState {
     Running,
     Failed,
     Stopped,
-    Starting(ctx::Task<StartStatus>),
-    Reloading(ctx::Task<ReloadStatus>),
-    Stopping(ctx::Task<()>),
+    Starting(ctx::Waiter<StartStatus>),
+    Reloading(ctx::Waiter<ReloadStatus>),
+    Stopping(ctx::Waiter<()>),
 }
 
 impl ServiceState {
@@ -80,24 +79,21 @@ pub struct FeService {
 
 impl FeService {
 
-    pub fn start(handle: &reactor::Handle, num: u16, cfg: ServiceConfig) -> Address<FeService>
+    pub fn start(num: u16, cfg: ServiceConfig) -> Address<FeService>
     {
-        Builder::with_default(
-            handle, move|ctx| {
-                let h = ctx.handle();
+        FeService::init(move |ctx| {
+            // create4 workers
+            let mut workers = Vec::new();
+            for idx in 0..num as usize {
+                workers.push(Worker::new(idx, cfg.clone(), ctx.address()));
+            }
 
-                // create4 workers
-                let mut workers = Vec::new();
-                for idx in 0..num as usize {
-                    workers.push(Worker::new(idx, h, cfg.clone(), ctx.address()));
-                }
-
-                FeService {
-                    name: cfg.name.clone(),
-                    state: ServiceState::Starting(ctx::Task::new()),
-                    paused: false,
-                    workers: workers}
-            }).run()
+            FeService {
+                name: cfg.name.clone(),
+                state: ServiceState::Starting(ctx::Waiter::new()),
+                paused: false,
+                workers: workers}
+        })
     }
 
     fn check_loading_workers(&mut self, restart_stopped: bool) -> (bool, bool) {
@@ -140,12 +136,12 @@ impl FeService {
                         }
                         self.state = ServiceState::Starting(task);
                     } else {
-                        task.set_result(StartStatus::Failed);
+                        task.set(StartStatus::Failed);
                         self.state = ServiceState::Failed;
                     }
                 } else {
                     if !in_process {
-                        task.set_result(StartStatus::Success);
+                        task.set(StartStatus::Success);
                         self.state = ServiceState::Running;
                     } else {
                         self.state = ServiceState::Starting(task);
@@ -165,12 +161,12 @@ impl FeService {
                         }
                         self.state = ServiceState::Reloading(task);
                     } else {
-                        task.set_result(ReloadStatus::Failed);
+                        task.set(ReloadStatus::Failed);
                         self.state = ServiceState::Failed;
                     }
                 } else {
                     if !in_process {
-                        task.set_result(ReloadStatus::Success);
+                        task.set(ReloadStatus::Success);
                         self.state = ServiceState::Running;
                     } else {
                         self.state = ServiceState::Reloading(task);
@@ -181,7 +177,7 @@ impl FeService {
                 let (_, in_process) = self.check_loading_workers(false);
 
                 if !in_process {
-                    task.set_result(());
+                    task.set(());
                     self.state = ServiceState::Stopped;
                 } else {
                     self.state = ServiceState::Stopping(task);
@@ -202,10 +198,9 @@ impl FeService {
 
 impl Service for FeService {
 
-    type Context = Context<Self>;
     type Message = DefaultMessage;
 
-    fn start(&mut self, _: &mut Self::Context) {
+    fn start(&mut self, _: &mut Context<Self>) {
         // start workers
         for worker in self.workers.iter_mut() {
             worker.start(Reason::Initial);
@@ -358,7 +353,7 @@ impl MessageHandler<Start> for FeService {
             }
             ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Starting service: {:?}", self.name);
-                let mut task = ctx::Task::new();
+                let mut task = ctx::Waiter::new();
                 let rx = task.wait();
                 self.paused = false;
                 self.state = ServiceState::Starting(task);
@@ -452,7 +447,7 @@ impl MessageHandler<Reload> for FeService {
             }
             ServiceState::Running | ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Reloading service: {:?}", self.name);
-                let mut task = ctx::Task::new();
+                let mut task = ctx::Waiter::new();
                 let rx = task.wait();
                 self.paused = false;
                 self.state = ServiceState::Reloading(task);
@@ -499,16 +494,16 @@ impl MessageHandler<Stop> for FeService {
                     }));
             },
             ServiceState::Starting(task) => {
-                task.set_result(StartStatus::Stopping);
+                task.set(StartStatus::Stopping);
             }
             ServiceState::Reloading(task) => {
-                task.set_result(ReloadStatus::Stopping);
+                task.set(ReloadStatus::Stopping);
             }
             ServiceState::Running => ()
         }
 
         // stop workers
-        let mut task = ctx::Task::new();
+        let mut task = ctx::Waiter::new();
         let rx = task.wait();
         self.paused = false;
         self.state = ServiceState::Stopping(task);

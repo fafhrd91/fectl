@@ -113,17 +113,18 @@ impl<'a> std::convert::From<&'a ProcessError> for Reason
 
 impl Process {
 
-    pub fn start(idx: usize, handle: &reactor::Handle,
-                 cfg: &ServiceConfig, addr: Address<FeService>) -> (Pid, Option<Address<Process>>)
+    pub fn start(idx: usize, cfg: &ServiceConfig, addr: Address<FeService>)
+                 -> (Pid, Option<Address<Process>>)
     {
         // fork process and esteblish communication
-        let (pid, pipe) = match Process::fork(handle, cfg) {
+        let (pid, pipe) = match Process::fork(ctx::get_handle(), cfg) {
             Ok(res) => res,
             Err(err) => {
                 let pid = Pid::from_raw(-1);
-                service::ProcessFailed(
-                    idx, pid,
-                    ProcessError::FailedToStart(Some(format!("{}", err)))).tell(&addr);
+                addr.tell(
+                    service::ProcessFailed(
+                        idx, pid,
+                        ProcessError::FailedToStart(Some(format!("{}", err)))));
 
                 return (pid, None)
             }
@@ -135,23 +136,26 @@ impl Process {
 
         // start Process service
         let (r, w) = pipe.ctx_framed(TransportCodec, TransportCodec);
-        let addr = Builder::with_init(
-            r, handle, move |ctx| Process {
-                idx: idx,
-                pid: pid,
-                state: ProcessState::Starting,
-                hb: Instant::now(),
-                addr: addr,
-                timeout: timeout,
-                startup_timeout: startup_timeout,
-                shutdown_timeout: shutdown_timeout,
-                sink: ctx.add_sink(ProcessSink, w)
-            })
-            .add_future(
-                Timeout::new(Duration::new(cfg.startup_timeout as u64, 0), &handle).unwrap()
-                    .map(|_| ProcessMessage::StartupTimeout)
-            )
-            .run();
+        let addr = Process::init_with(
+            r, move |ctx| {
+                ctx.add_future(
+                    Timeout::new(Duration::new(startup_timeout as u64, 0), ctx::get_handle())
+                        .unwrap()
+                        .map(|_| ProcessMessage::StartupTimeout)
+                );
+
+                Process {
+                    idx: idx,
+                    pid: pid,
+                    state: ProcessState::Starting,
+                    hb: Instant::now(),
+                    addr: addr,
+                    timeout: timeout,
+                    startup_timeout: startup_timeout,
+                    shutdown_timeout: shutdown_timeout,
+                    sink: ctx.add_sink(ProcessSink, w)
+                }
+            });
 
         (pid, Some(addr))
     }
@@ -229,16 +233,15 @@ impl SinkService for ProcessSink {
 
 impl Service for Process {
 
-    type Context = Context<Self>;
     type Message = Result<ProcessMessage, io::Error>;
 
-    fn finished(&mut self, ctx: &mut Self::Context) -> ServiceResult
+    fn finished(&mut self, ctx: &mut Context<Self>) -> ServiceResult
     {
         self.kill(ctx);
         ServiceResult::NotReady
     }
 
-    fn call(&mut self, ctx: &mut Self::Context, msg: Self::Message) -> ServiceResult
+    fn call(&mut self, ctx: &mut Context<Self>, msg: Self::Message) -> ServiceResult
     {
         match msg {
             Ok(ProcessMessage::Message(msg)) => match msg {
@@ -250,7 +253,8 @@ impl Service for Process {
                     match self.state {
                         ProcessState::Starting => {
                             debug!("Worker loaded (pid:{})", self.pid);
-                            service::ProcessLoaded(self.idx, self.pid).tell(&self.addr);
+                            self.addr.tell(
+                                service::ProcessLoaded(self.idx, self.pid));
 
                             // start heartbeat timer
                             self.state = ProcessState::Running;
@@ -273,27 +277,31 @@ impl Service for Process {
                 WorkerMessage::reload => {
                     // worker requests reload
                     info!("Worker requests reload (pid:{})", self.pid);
-                    service::ProcessMessage(self.idx, self.pid, WorkerMessage::reload)
-                        .tell(&self.addr);
+                    self.addr.tell(
+                        service::ProcessMessage(
+                            self.idx, self.pid, WorkerMessage::reload));
                 }
                 WorkerMessage::restart => {
                     // worker requests reload
                     info!("Worker requests restart (pid:{})", self.pid);
-                    service::ProcessMessage(self.idx, self.pid, WorkerMessage::restart)
-                        .tell(&self.addr);
+                    self.addr.tell(
+                        service::ProcessMessage(
+                            self.idx, self.pid, WorkerMessage::restart));
                 }
                 WorkerMessage::cfgerror(msg) => {
                     error!("Worker config error: {} (pid:{})", msg, self.pid);
-                    service::ProcessFailed(self.idx, self.pid, ProcessError::ConfigError(msg))
-                        .tell(&self.addr);
+                    self.addr.tell(
+                        service::ProcessFailed(
+                            self.idx, self.pid, ProcessError::ConfigError(msg)));
                 }
             }
             Ok(ProcessMessage::StartupTimeout) => {
                 match self.state {
                     ProcessState::Starting => {
                         error!("Worker startup timeout after {} secs", self.startup_timeout);
-                        service::ProcessFailed(self.idx, self.pid, ProcessError::StartupTimeout)
-                            .tell(&self.addr);
+                        self.addr.tell(
+                            service::ProcessFailed(
+                                self.idx, self.pid, ProcessError::StartupTimeout));
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
@@ -306,8 +314,9 @@ impl Service for Process {
                 match self.state {
                     ProcessState::Stopping => {
                         info!("Worker shutdown timeout aftre {} secs", self.shutdown_timeout);
-                        service::ProcessFailed(self.idx, self.pid, ProcessError::StopTimeout)
-                            .tell(&self.addr);
+                        self.addr.tell(
+                            service::ProcessFailed(
+                                self.idx, self.pid, ProcessError::StopTimeout));
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
@@ -323,8 +332,9 @@ impl Service for Process {
                         // heartbeat timed out
                         error!("Worker heartbeat failed (pid:{}) after {:?} secs",
                                self.pid, self.timeout);
-                        service::ProcessFailed(self.idx, self.pid, ProcessError::Heartbeat)
-                            .tell(&self.addr);
+                        self.addr.tell(
+                            service::ProcessFailed(
+                                self.idx, self.pid, ProcessError::Heartbeat));
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
                         self.sink.send_buffered(WorkerCommand::hb);

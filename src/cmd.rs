@@ -1,17 +1,12 @@
 use std::rc::Rc;
 use std::collections::HashMap;
 
-use libc;
-use futures::unsync::oneshot;
-use futures::{Future, Stream};
-use tokio_core::reactor;
-use tokio_signal;
-use tokio_signal::unix::Signal;
 use nix::unistd::getpid;
 use nix::sys::wait::{waitpid, WaitStatus, WNOHANG};
 
 use ctx::prelude::*;
 
+use signals::{ProcessEvent, ProcessEventType};
 use config::Config;
 use event::{Reason, ServiceStatus};
 use process::ProcessError;
@@ -38,105 +33,40 @@ enum State {
     Stopping,
 }
 
-#[derive(Debug)]
-pub enum Command {
-    Stop,
-    Quit,
-    Reload,
-    ReapWorkers,
-}
-
 pub struct CommandCenter {
     cfg: Rc<Config>,
     state: State,
-    stop: Option<oneshot::Sender<bool>>,
+    system: Address<ctx::System>,
     services: HashMap<String, Address<FeService>>,
-    stop_waiters: Vec<oneshot::Sender<bool>>,
+    stop_waiter: Option<ctx::Waiter<bool>>,
     stopping: usize,
 }
 
 impl CommandCenter {
 
-    pub fn start(cfg: Rc<Config>,
-                 handle: &reactor::Handle,
-                 stop: oneshot::Sender<bool>) -> Address<CommandCenter> {
-        let cmd = CommandCenter {
+    pub fn start(cfg: Rc<Config>) -> Address<CommandCenter> {
+        CommandCenter {
             cfg: cfg,
             state: State::Starting,
-            stop: Some(stop),
+            system: ctx::get_system(),
             services: HashMap::new(),
-            stop_waiters: Vec::new(),
+            stop_waiter: None,
             stopping: 0,
-        };
-
-        // start command center
-        Builder::build_default(cmd, &handle).run()
+        }.start()
     }
 
     fn exit(&mut self, success: bool) {
-        while let Some(waiter) = self.stop_waiters.pop() {
-            let _ = waiter.send(true);
+        if let Some(waiter) = self.stop_waiter.take() {
+            waiter.set(true);
         }
 
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(success);
+        if success {
+            self.system.tell(ctx::SystemExit(0));
+        } else {
+            self.system.tell(ctx::SystemExit(0));
         }
     }
 
-    fn init_signals(&self, ctx: &mut Context<Self>) {
-        let handle = ctx.handle().clone();
-
-        // SIGINT
-        tokio_signal::ctrl_c(&handle).map_err(|_| ())
-            .ctxfuture()
-            .map(|sig, _: &mut _, ctx: &mut Context<Self>|
-                 ctx.add_stream(
-                     sig.map_err(|_| ()).map(|_| {
-                         info!("SIGINT received, exiting");
-                         Command::Quit})))
-            .spawn(ctx);
-
-        // SIGHUP
-        Signal::new(libc::SIGHUP, &handle).map_err(|_| ())
-            .ctxfuture()
-            .map(|sig, _: &mut _, ctx: &mut Context<Self>|
-                 ctx.add_stream(
-                     sig.map_err(|_| ()).map(|_| {
-                         info!("SIGHUP received, reloading");
-                         Command::Reload})))
-            .spawn(ctx);
-
-        // SIGTERM
-        Signal::new(libc::SIGTERM, &handle).map_err(|_| ())
-            .ctxfuture()
-            .map(|sig, _: &mut _, ctx: &mut Context<Self>|
-                 ctx.add_stream(
-                     sig.map_err(|_| ()).map(|_| {
-                         info!("SIGTERM received, stopping");
-                         Command::Stop})))
-            .spawn(ctx);
-
-        // SIGQUIT
-        Signal::new(libc::SIGQUIT, &handle).map_err(|_| ())
-            .ctxfuture()
-            .map(|sig, _: &mut _, ctx: &mut Context<Self>|
-                 ctx.add_stream(
-                     sig.map_err(|_| ()).map(|_| {
-                         info!("SIGQUIT received, exiting");
-                         Command::Quit})))
-            .spawn(ctx);
-
-        // SIGCHLD
-        Signal::new(libc::SIGCHLD, &handle).map_err(|_| ())
-            .ctxfuture()
-            .map(|sig, _: &mut _, ctx: &mut Context<Self>|
-                 ctx.add_stream(
-                     sig.map_err(|_| ()).map(|_| {
-                         info!("SIGCHLD received");
-                         Command::ReapWorkers})))
-            .spawn(ctx);
-    }
-    
     fn stop(&mut self, ctx: &mut Context<Self>, graceful: bool)
     {
         if self.state != State::Stopping {
@@ -145,8 +75,7 @@ impl CommandCenter {
             self.state = State::Stopping;
             for service in self.services.values() {
                 self.stopping += 1;
-                service::Stop(graceful, Reason::Exit).send(service)
-                    .ctxfuture()
+                service.send(service::Stop(graceful, Reason::Exit))
                     .then(|res, srv: &mut CommandCenter, _: &mut Context<Self>| {
                         srv.stopping -= 1;
                         let exit = srv.stopping == 0;
@@ -180,11 +109,10 @@ impl MessageHandler<ServicePids> for CommandCenter {
             State::Running => {
                 match self.services.get(&msg.0) {
                     Some(service) => Box::new(
-                        service::Pids.send(service).ctxfuture()
-                            .then(|res, _, _| match res {
-                                Ok(Ok(status)) => fut::ok(status),
-                                _ => fut::err(CommandError::UnknownService)
-                            })),
+                        service.send(service::Pids).then(|res, _, _| match res {
+                            Ok(Ok(status)) => fut::ok(status),
+                            _ => fut::err(CommandError::UnknownService)
+                        })),
                     None => Box::new(fut::err(CommandError::UnknownService)),
                 }
             }
@@ -198,7 +126,7 @@ impl MessageHandler<ServicePids> for CommandCenter {
 pub struct Stop;
 
 impl Message for Stop {
-    type Item = oneshot::Receiver<bool>;
+    type Item = bool;
     type Error = ();
 }
 
@@ -206,10 +134,21 @@ impl MessageHandler<Stop> for CommandCenter {
 
     fn handle(&mut self, _: Stop, ctx: &mut Context<Self>) -> MessageFuture<Stop, Self>
     {
-        let (tx, rx) = oneshot::channel();
-        self.stop_waiters.push(tx);
         self.stop(ctx, true);
-        Box::new(fut::ok(rx))
+
+        if self.stop_waiter.is_none() {
+            self.stop_waiter = Some(ctx::Waiter::new());
+        }
+
+        if let Some(ref mut waiter) = self.stop_waiter {
+            return Box::new(
+                waiter.wait().ctxfuture().then(|res, _, _| match res {
+                    Ok(res) => fut::result(Ok(res)),
+                    Err(_) => fut::result(Err(())),
+                }))
+        } else {
+            unreachable!();
+        }
     }
 }
 
@@ -232,7 +171,7 @@ impl MessageHandler<StartService> for CommandCenter {
                 info!("Starting service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) => Box::new(
-                        service::Start.send(service).ctxfuture()
+                        service.send(service::Start)
                             .then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -267,8 +206,7 @@ impl MessageHandler<StopService> for CommandCenter {
                 info!("Stopping service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) => Box::new(
-                        service::Stop(msg.1, Reason::ConsoleRequest).send(service)
-                            .ctxfuture()
+                        service.send(service::Stop(msg.1, Reason::ConsoleRequest))
                             .then(|res, _, _| match res {
                                 Ok(Ok(_)) => fut::ok(()),
                                 _ => fut::err(CommandError::ServiceStopped),
@@ -301,7 +239,7 @@ impl MessageHandler<StatusService> for CommandCenter {
             State::Running => {
                 match self.services.get(&msg.0) {
                     Some(service) => Box::new(
-                        service::Status.send(service).ctxfuture()
+                        service.send(service::Status)
                             .then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 _ => fut::err(CommandError::UnknownService)
@@ -335,7 +273,7 @@ impl MessageHandler<PauseService> for CommandCenter {
                 info!("Pause service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) => Box::new(
-                        service::Pause.send(service).ctxfuture()
+                        service.send(service::Pause)
                             .then(|res, _, _| match res {
                                 Ok(Ok(_)) => fut::ok(()),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -370,7 +308,7 @@ impl MessageHandler<ResumeService> for CommandCenter {
                 info!("Resume service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) => Box::new(
-                        service::Resume.send(service).ctxfuture()
+                        service.send(service::Resume)
                             .then(|res, _, _| match res {
                                 Ok(Ok(_)) => fut::ok(()),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -406,7 +344,7 @@ impl MessageHandler<ReloadService> for CommandCenter {
                 let graceful = msg.1;
                 match self.services.get(&msg.0) {
                     Some(service) => Box::new(
-                        service::Reload(graceful).send(service).ctxfuture()
+                        service.send(service::Reload(graceful))
                             .then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
@@ -439,7 +377,9 @@ impl MessageHandler<ReloadAll> for CommandCenter {
             State::Running => {
                 info!("reloading all services");
                 for srv in self.services.values() {
-                    service::Reload(true).tell(srv);
+                    srv.tell(
+                        service::Reload(true)
+                    );
                 }
             }
             _ => warn!("Can not reload in system in `{:?}` state", self.state)
@@ -448,45 +388,31 @@ impl MessageHandler<ReloadAll> for CommandCenter {
     }
 }
 
+/// Handle ProcessEvent (SIGHUP, SIGINT, etc)
+impl MessageHandler<ProcessEvent> for CommandCenter {
 
-impl Service for CommandCenter {
-
-    type Context = Context<Self>;
-    type Message = Result<Command, ()>;
-
-    fn start(&mut self, ctx: &mut Self::Context)
+    fn handle(&mut self, msg: ProcessEvent, ctx: &mut Context<Self>)
+              -> MessageFuture<ProcessEvent, Self>
     {
-        info!("Starting ctl service: {}", getpid());
-        self.init_signals(ctx);
-
-        // start services
-        for cfg in self.cfg.services.iter() {
-            let service = FeService::start(ctx.handle(), cfg.num, cfg.clone());
-            self.services.insert(cfg.name.clone(), service);
-        }
-        self.state = State::Running;
-    }
-
-    fn finished(&mut self, _: &mut Self::Context) -> ServiceResult
-    {
-        self.exit(true);
-
-        ServiceResult::Done
-    }
-
-    fn call(&mut self, ctx: &mut Self::Context, cmd: Self::Message) -> ServiceResult
-    {
-        match cmd {
-            Ok(Command::Stop) => {
-                self.stop(ctx, true);
-            }
-            Ok(Command::Quit) => {
+        match msg.0 {
+            ProcessEventType::Int => {
+                info!("SIGINT received, exiting");
                 self.stop(ctx, false);
             }
-            Ok(Command::Reload) => {
-                self.handle(ReloadAll, ctx);
+            ProcessEventType::Hup => {
+                info!("SIGHUP received, reloading");
+                // self.handle(ReloadAll, ctx);
             }
-            Ok(Command::ReapWorkers) => {
+            ProcessEventType::Term => {
+                info!("SIGTERM received, stopping");
+                self.stop(ctx, true);
+            }
+            ProcessEventType::Quit => {
+                info!("SIGQUIT received, exiting");
+                self.stop(ctx, false);
+            }
+            ProcessEventType::Child => {
+                info!("SIGCHLD received");
                 debug!("Reap workers");
                 loop {
                     match waitpid(None, Some(WNOHANG)) {
@@ -494,7 +420,9 @@ impl Service for CommandCenter {
                             info!("Worker {} exit code: {}", pid, code);
                             let err = ProcessError::from(code);
                             for srv in self.services.values_mut() {
-                                service::ProcessExited(pid.clone(), err.clone()).tell(srv);
+                                srv.tell(
+                                    service::ProcessExited(pid.clone(), err.clone())
+                                );
                             }
                             continue
                         }
@@ -502,7 +430,9 @@ impl Service for CommandCenter {
                             info!("Worker {} exit by signal {:?}", pid, sig);
                             let err = ProcessError::Signal(sig as usize);
                             for srv in self.services.values_mut() {
-                                service::ProcessExited(pid.clone(), err.clone()).tell(srv);
+                                srv.tell(
+                                    service::ProcessExited(pid.clone(), err.clone())
+                                );
                             }
                             continue
                         },
@@ -512,12 +442,32 @@ impl Service for CommandCenter {
                     break
                 }
             }
-            Err(_) => {
-                self.exit(false);
-                return ServiceResult::Done
-            }
-        }
+        };
+        Box::new(fut::ok(()))
+    }
+}
 
-        ServiceResult::NotReady
+
+impl Service for CommandCenter {
+
+    type Message = DefaultMessage;
+
+    fn start(&mut self, _: &mut Context<Self>)
+    {
+        info!("Starting ctl service: {}", getpid());
+
+        // start services
+        for cfg in self.cfg.services.iter() {
+            let service = FeService::start(cfg.num, cfg.clone());
+            self.services.insert(cfg.name.clone(), service);
+        }
+        self.state = State::Running;
+    }
+
+    fn finished(&mut self, _: &mut Context<Self>) -> ServiceResult
+    {
+        self.exit(true);
+
+        ServiceResult::Done
     }
 }
