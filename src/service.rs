@@ -219,12 +219,15 @@ impl Message for ProcessMessage {
 
     type Item = ();
     type Error = ();
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<ProcessMessage> for FeService {
+
+    fn handle(&mut self, msg: ProcessMessage, _: &mut Context<Self>)
+              -> MessageFuture<ProcessMessage, Self>
     {
-        srv.workers[self.0].message(self.1, &self.2);
-        srv.update();
+        self.workers[msg.0].message(msg.1, &msg.2);
+        self.update();
         Box::new(fut::ok(()))
     }
 }
@@ -232,15 +235,17 @@ impl Message for ProcessMessage {
 pub struct ProcessFailed(pub usize, pub Pid, pub ProcessError);
 
 impl Message for ProcessFailed {
-
     type Item = ();
     type Error = ();
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<ProcessFailed> for FeService {
+
+    fn handle(&mut self, msg: ProcessFailed, _: &mut Context<Self>)
+              -> MessageFuture<ProcessFailed, Self>
     {
-        srv.workers[self.0].exited(self.1, &self.2);
-        srv.update();
+        self.workers[msg.0].exited(msg.1, &msg.2);
+        self.update();
         Box::new(fut::ok(()))
     }
 }
@@ -248,51 +253,55 @@ impl Message for ProcessFailed {
 pub struct ProcessLoaded(pub usize, pub Pid);
 
 impl Message for ProcessLoaded {
-
     type Item = ();
     type Error = ();
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<ProcessLoaded> for FeService {
+
+    fn handle(&mut self, msg: ProcessLoaded, _: &mut Context<Self>)
+              -> MessageFuture<ProcessLoaded, Self>
     {
-        srv.workers[self.0].loaded(self.1);
-        srv.update();
+        self.workers[msg.0].loaded(msg.1);
+        self.update();
         Box::new(fut::ok(()))
     }
 }
 
-
 pub struct ProcessExited(pub Pid, pub ProcessError);
 
 impl Message for ProcessExited {
-
     type Item = ();
     type Error = ();
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<ProcessExited> for FeService {
+
+    fn handle(&mut self, msg: ProcessExited, _: &mut Context<Self>)
+              -> MessageFuture<ProcessExited, Self>
     {
-        for worker in srv.workers.iter_mut() {
-            worker.exited(self.0, &self.1);
+        for worker in self.workers.iter_mut() {
+            worker.exited(msg.0, &msg.1);
         }
-        srv.update();
+        self.update();
         Box::new(fut::ok(()))
     }
 }
 
 /// Service status command
-pub struct ServicePids;
+pub struct Pids;
 
-impl Message for ServicePids {
-
+impl Message for Pids {
     type Item = Vec<String>;
     type Error = ();
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<Pids> for FeService {
+
+    fn handle(&mut self, _: Pids, _: &mut Context<Self>) -> MessageFuture<Pids, Self>
     {
         let mut pids = Vec::new();
-        for worker in srv.workers.iter() {
+        for worker in self.workers.iter() {
             if let Some(pid) = worker.pid() {
                 pids.push(format!("{}", pid));
             }
@@ -302,42 +311,44 @@ impl Message for ServicePids {
 }
 
 /// Service status command
-pub struct ServiceStatus;
+pub struct Status;
 
-impl Message for ServiceStatus {
-
+impl Message for Status {
     type Item = (String, Vec<(String, Vec<Event>)>);
     type Error = ();
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<Status> for FeService {
+
+    fn handle(&mut self, _: Status, _: &mut Context<Self>) -> MessageFuture<Status, Self>
     {
         let mut events: Vec<(String, Vec<Event>)> = Vec::new();
-        for worker in srv.workers.iter() {
+        for worker in self.workers.iter() {
             events.push(
                 (format!("worker({})", worker.idx + 1), Vec::from(&worker.events)));
         }
 
-        let status = match srv.state {
-            ServiceState::Running => if srv.paused { "paused" } else { "running" }
-            _ => srv.state.description()
+        let status = match self.state {
+            ServiceState::Running => if self.paused { "paused" } else { "running" }
+            _ => self.state.description()
         };
         Box::new(fut::ok((status.to_owned(), events)))
     }
 }
 
 /// Start service command
-pub struct StartService;
+pub struct Start;
 
-impl Message for StartService {
-
+impl Message for Start {
     type Item = StartStatus;
     type Error = ServiceOperationError;
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<Start> for FeService {
+
+    fn handle(&mut self, _: Start, _: &mut Context<Self>) -> MessageFuture<Start, Self>
     {
-        match srv.state {
+        match self.state {
             ServiceState::Starting(ref mut task) => {
                 Box::new(
                     task.wait().ctxfuture().then(|res, _, _| match res {
@@ -346,12 +357,12 @@ impl Message for StartService {
                     }))
             }
             ServiceState::Failed | ServiceState::Stopped => {
-                debug!("Starting service: {:?}", srv.name);
+                debug!("Starting service: {:?}", self.name);
                 let mut task = ctx::Task::new();
                 let rx = task.wait();
-                srv.paused = false;
-                srv.state = ServiceState::Starting(task);
-                for worker in srv.workers.iter_mut() {
+                self.paused = false;
+                self.state = ServiceState::Starting(task);
+                for worker in self.workers.iter_mut() {
                     worker.start(Reason::ConsoleRequest);
                 }
                 Box::new(
@@ -360,75 +371,78 @@ impl Message for StartService {
                         Err(_) => fut::result(Err(ServiceOperationError::Failed)),
                 }))
             }
-            _ => Box::new(fut::result(Err(srv.state.error())))
+            _ => Box::new(fut::result(Err(self.state.error())))
         }
     }
 }
 
 /// Pause service command
-pub struct PauseService;
+pub struct Pause;
 
-impl Message for PauseService {
-
+impl Message for Pause {
     type Item = ();
     type Error = ServiceOperationError;
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<Pause> for FeService {
+
+    fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> MessageFuture<Pause, Self>
     {
-        let res = match srv.state {
+        let res = match self.state {
             ServiceState::Running => {
-                debug!("Pause service: {:?}", srv.name);
-                for worker in srv.workers.iter_mut() {
+                debug!("Pause service: {:?}", self.name);
+                for worker in self.workers.iter_mut() {
                     worker.pause(Reason::ConsoleRequest);
                 }
-                srv.paused = true;
+                self.paused = true;
                 Ok(())
             }
-            _ => Err(srv.state.error())
+            _ => Err(self.state.error())
         };
         Box::new(fut::result(res))
     }
 }
 
 /// Resume service command
-pub struct ResumeService;
+pub struct Resume;
 
-impl Message for ResumeService {
-
+impl Message for Resume {
     type Item = ();
     type Error = ServiceOperationError;
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<Resume> for FeService {
+
+    fn handle(&mut self, _: Resume, _: &mut Context<Self>) -> MessageFuture<Resume, Self>
     {
-        let res = match srv.state {
+        let res = match self.state {
             ServiceState::Running => {
-                debug!("Resume service: {:?}", srv.name);
-                for worker in srv.workers.iter_mut() {
+                debug!("Resume service: {:?}", self.name);
+                for worker in self.workers.iter_mut() {
                     worker.resume(Reason::ConsoleRequest);
                 }
-                srv.paused = false;
+                self.paused = false;
                 Ok(())
             }
-            _ => Err(srv.state.error())
+            _ => Err(self.state.error())
         };
         Box::new(fut::result(res))
     }
 }
 
 /// Reload service
-pub struct ReloadService(pub bool);
+pub struct Reload(pub bool);
 
-impl Message for ReloadService {
-
+impl Message for Reload {
     type Item = ReloadStatus;
     type Error = ServiceOperationError;
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<Reload> for FeService {
+
+    fn handle(&mut self, msg: Reload, _: &mut Context<Self>) -> MessageFuture<Reload, Self>
     {
-        match srv.state {
+        match self.state {
             ServiceState::Reloading(ref mut task) => {
                 Box::new(
                     task.wait().ctxfuture().then(|res, _, _| match res {
@@ -437,13 +451,13 @@ impl Message for ReloadService {
                     }))
             }
             ServiceState::Running | ServiceState::Failed | ServiceState::Stopped => {
-                debug!("Reloading service: {:?}", srv.name);
+                debug!("Reloading service: {:?}", self.name);
                 let mut task = ctx::Task::new();
                 let rx = task.wait();
-                srv.paused = false;
-                srv.state = ServiceState::Reloading(task);
-                for worker in srv.workers.iter_mut() {
-                    worker.reload(self.0, Reason::ConsoleRequest);
+                self.paused = false;
+                self.state = ServiceState::Reloading(task);
+                for worker in self.workers.iter_mut() {
+                    worker.reload(msg.0, Reason::ConsoleRequest);
                 }
                 Box::new(
                     rx.ctxfuture().then(|res, _, _| match res {
@@ -451,32 +465,33 @@ impl Message for ReloadService {
                         Err(_) => fut::result(Err(ServiceOperationError::Failed)),
                     }))
             }
-            _ => Box::new(fut::result(Err(srv.state.error())))
+            _ => Box::new(fut::result(Err(self.state.error())))
         }
     }
 }
 
 /// Stop service command
-pub struct StopService(pub bool, pub Reason);
+pub struct Stop(pub bool, pub Reason);
 
-impl Message for StopService {
-
+impl Message for Stop {
     type Item = ();
     type Error = ();
-    type Service = FeService;
+}
 
-    fn handle(&self, srv: &mut FeService, _: &mut Context<FeService>) -> MessageFuture<Self>
+impl MessageHandler<Stop> for FeService {
+
+    fn handle(&mut self, msg: Stop, _: &mut Context<Self>) -> MessageFuture<Stop, Self>
     {
-        let state = std::mem::replace(&mut srv.state, ServiceState::Stopped);
+        let state = std::mem::replace(&mut self.state, ServiceState::Stopped);
 
         match state {
             ServiceState::Failed | ServiceState::Stopped => {
-                srv.state = state;
+                self.state = state;
                 return Box::new(fut::err(()))
             },
             ServiceState::Stopping(mut task) => {
                 let rx = task.wait();
-                srv.state = ServiceState::Stopping(task);
+                self.state = ServiceState::Stopping(task);
                 return Box::new(
                     rx.ctxfuture().then(|res, _, _| match res {
                         Ok(_) => fut::ok(()),
@@ -495,16 +510,16 @@ impl Message for StopService {
         // stop workers
         let mut task = ctx::Task::new();
         let rx = task.wait();
-        srv.paused = false;
-        srv.state = ServiceState::Stopping(task);
-        for worker in srv.workers.iter_mut() {
-            if self.0 {
-                worker.stop(self.1.clone());
+        self.paused = false;
+        self.state = ServiceState::Stopping(task);
+        for worker in self.workers.iter_mut() {
+            if msg.0 {
+                worker.stop(msg.1.clone());
             } else {
-                worker.quit(self.1.clone());
+                worker.quit(msg.1.clone());
             }
         }
-        srv.update();
+        self.update();
 
         Box::new(
             rx.ctxfuture().then(|res, _, _| match res {

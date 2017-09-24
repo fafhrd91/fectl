@@ -349,14 +349,16 @@ impl Service for Process {
 pub struct SendCommand(pub WorkerCommand);
 
 impl Message for SendCommand {
-
     type Item = ();
     type Error = ();
-    type Service = Process;
+}
 
-    fn handle(&self, srv: &mut Process, _: &mut Context<Process>) -> MessageFuture<Self>
+impl MessageHandler<SendCommand> for Process {
+
+    fn handle(&mut self, msg: SendCommand, _: &mut Context<Process>)
+              -> MessageFuture<SendCommand, Self>
     {
-        srv.sink.send_buffered(self.0.clone());
+        self.sink.send_buffered(msg.0);
         Box::new(fut::ok(()))
     }
 }
@@ -364,14 +366,16 @@ impl Message for SendCommand {
 pub struct StartProcess;
 
 impl Message for StartProcess {
-
     type Item = ();
     type Error = ();
-    type Service = Process;
+}
 
-    fn handle(&self, srv: &mut Process, _: &mut Context<Process>) -> MessageFuture<Self>
+impl MessageHandler<StartProcess> for Process {
+
+    fn handle(&mut self, _: StartProcess, _: &mut Context<Process>)
+              -> MessageFuture<StartProcess, Self>
     {
-        srv.sink.send_buffered(WorkerCommand::start);
+        self.sink.send_buffered(WorkerCommand::start);
         Box::new(fut::ok(()))
     }
 }
@@ -379,14 +383,16 @@ impl Message for StartProcess {
 pub struct PauseProcess;
 
 impl Message for PauseProcess {
-
     type Item = ();
     type Error = ();
-    type Service = Process;
+}
 
-    fn handle(&self, srv: &mut Process, _: &mut Context<Process>) -> MessageFuture<Self>
+impl MessageHandler<PauseProcess> for Process {
+
+    fn handle(&mut self, _: PauseProcess, _: &mut Context<Process>)
+              -> MessageFuture<PauseProcess, Self>
     {
-        srv.sink.send_buffered(WorkerCommand::pause);
+        self.sink.send_buffered(WorkerCommand::pause);
         Box::new(fut::ok(()))
     }
 }
@@ -394,14 +400,16 @@ impl Message for PauseProcess {
 pub struct ResumeProcess;
 
 impl Message for ResumeProcess {
-
     type Item = ();
     type Error = ();
-    type Service = Process;
+}
 
-    fn handle(&self, srv: &mut Process, _: &mut Context<Process>) -> MessageFuture<Self>
+impl MessageHandler<ResumeProcess> for Process {
+
+    fn handle(&mut self, _: ResumeProcess, _: &mut Context<Process>)
+              -> MessageFuture<ResumeProcess, Self>
     {
-        srv.sink.send_buffered(WorkerCommand::resume);
+        self.sink.send_buffered(WorkerCommand::resume);
         Box::new(fut::ok(()))
     }
 }
@@ -409,32 +417,34 @@ impl Message for ResumeProcess {
 pub struct StopProcess;
 
 impl Message for StopProcess {
-
     type Item = ();
     type Error = ();
-    type Service = Process;
+}
 
-    fn handle(&self, srv: &mut Process, ctx: &mut Context<Process>) -> MessageFuture<Self>
+impl MessageHandler<StopProcess> for Process {
+
+    fn handle(&mut self, _: StopProcess, ctx: &mut Context<Process>)
+              -> MessageFuture<StopProcess, Self>
     {
-        info!("Stopping worker: (pid:{})", srv.pid);
-        match srv.state {
+        info!("Stopping worker: (pid:{})", self.pid);
+        match self.state {
             ProcessState::Running => {
-                srv.sink.send_buffered(WorkerCommand::stop);
+                self.sink.send_buffered(WorkerCommand::stop);
 
-                srv.state = ProcessState::Stopping;
+                self.state = ProcessState::Stopping;
                 if let Ok(timeout) = Timeout::new(
-                    Duration::new(srv.shutdown_timeout, 0), ctx.handle())
+                    Duration::new(self.shutdown_timeout, 0), ctx.handle())
                 {
                     ctx.add_future(timeout.map(|_| ProcessMessage::StopTimeout));
-                    let _ = kill(srv.pid, Signal::SIGTERM);
+                    let _ = kill(self.pid, Signal::SIGTERM);
                 } else {
                     // can not create timeout
-                    let _ = kill(srv.pid, Signal::SIGQUIT);
+                    let _ = kill(self.pid, Signal::SIGQUIT);
                     ctx.set_done();
                 }
             },
             _ => {
-                let _ = kill(srv.pid, Signal::SIGQUIT);
+                let _ = kill(self.pid, Signal::SIGQUIT);
                 ctx.set_done();
             }
         }
@@ -445,15 +455,17 @@ impl Message for StopProcess {
 pub struct QuitProcess;
 
 impl Message for QuitProcess {
-
     type Item = ();
     type Error = ();
-    type Service = Process;
+}
 
-    fn handle(&self, srv: &mut Process, ctx: &mut Context<Process>) -> MessageFuture<Self>
+impl MessageHandler<QuitProcess> for Process {
+
+    fn handle(&mut self, _: QuitProcess, ctx: &mut Context<Process>)
+              -> MessageFuture<QuitProcess, Self>
     {
-        let _ = kill(srv.pid, Signal::SIGQUIT);
-        srv.kill(ctx);
+        let _ = kill(self.pid, Signal::SIGQUIT);
+        self.kill(ctx);
         Box::new(fut::ok(()))
     }
 }

@@ -41,6 +41,7 @@ mod socket;
 mod worker;
 mod process;
 mod io;
+mod signals;
 mod utils;
 
 mod version {
