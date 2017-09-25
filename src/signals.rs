@@ -39,10 +39,10 @@ impl Service for ProcessEvents {
     type Message = Result<ProcessEventType, ()>;
 
     fn start(&mut self, ctx: &mut Context<Self>) {
-        let handle = ctx.handle().clone();
+        let handle = Arbiter::handle();
 
         // SIGINT
-        tokio_signal::ctrl_c(&handle).map_err(|_| ())
+        tokio_signal::ctrl_c(handle).map_err(|_| ())
             .ctxfuture()
             .map(|sig, _: &mut ProcessEvents, ctx: &mut Context<Self>|
                  ctx.add_stream(
@@ -50,7 +50,7 @@ impl Service for ProcessEvents {
             .spawn(ctx);
 
         // SIGHUP
-        Signal::new(libc::SIGHUP, &handle).map_err(|_| ())
+        Signal::new(libc::SIGHUP, handle).map_err(|_| ())
             .ctxfuture()
             .map(|sig, _: &mut ProcessEvents, ctx: &mut Context<Self>|
                  ctx.add_stream(
@@ -58,7 +58,7 @@ impl Service for ProcessEvents {
             .spawn(ctx);
 
         // SIGTERM
-        Signal::new(libc::SIGTERM, &handle).map_err(|_| ())
+        Signal::new(libc::SIGTERM, handle).map_err(|_| ())
             .ctxfuture()
             .map(|sig, _: &mut Self, ctx: &mut Context<Self>|
                  ctx.add_stream(
@@ -66,7 +66,7 @@ impl Service for ProcessEvents {
             .spawn(ctx);
 
         // SIGQUIT
-        Signal::new(libc::SIGQUIT, &handle).map_err(|_| ())
+        Signal::new(libc::SIGQUIT, handle).map_err(|_| ())
             .ctxfuture()
             .map(|sig, _: &mut ProcessEvents, ctx: &mut Context<Self>|
                  ctx.add_stream(
@@ -74,7 +74,7 @@ impl Service for ProcessEvents {
             .spawn(ctx);
 
         // SIGCHLD
-        Signal::new(libc::SIGCHLD, &handle).map_err(|_| ())
+        Signal::new(libc::SIGCHLD, handle).map_err(|_| ())
             .ctxfuture()
             .map(|sig, _: &mut ProcessEvents, ctx: &mut Context<Self>|
                  ctx.add_stream(
@@ -82,7 +82,7 @@ impl Service for ProcessEvents {
             .spawn(ctx);
     }
 
-    fn call(&mut self, _: &mut Context<Self>, msg: Self::Message) -> ServiceResult
+    fn call(&mut self, msg: Self::Message, _: &mut Context<Self>) -> ServiceResult
     {
         match msg {
             Ok(ev) => {

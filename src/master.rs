@@ -35,15 +35,15 @@ impl Service for Master {
 
     type Message = Result<(UnixStream, std::os::unix::net::SocketAddr), io::Error>;
 
-    fn call(&mut self, ctx: &mut Context<Self>, msg: Self::Message) -> ServiceResult
+    fn call(&mut self, msg: Self::Message, _: &mut Context<Self>) -> ServiceResult
     {
         match msg {
             Ok((stream, _)) => {
                 let cmd = self.cmd.clone();
                 let (r, w) = stream.ctx_framed(MasterTransportCodec, MasterTransportCodec);
-                MasterClient::from_context(
-                    ctx, r, move |ctx| MasterClient{cmd: cmd,
-                                                    sink: ctx.add_sink(w)}
+                MasterClient::init_with(
+                    r, move |ctx| MasterClient{cmd: cmd,
+                                               sink: ctx.add_sink(w)}
                 );
             }
             _ => (),
@@ -76,7 +76,7 @@ enum MasterClientMessage {
 impl MasterClient {
 
     fn hb(&self, ctx: &mut Context<Self>) {
-        let fut = Timeout::new(Duration::new(1, 0), ctx.handle())
+        let fut = Timeout::new(Duration::new(1, 0), Arbiter::handle())
             .unwrap()
             .ctxfuture()
             .then(|_, srv: &mut MasterClient, ctx: &mut Context<Self>| {
@@ -185,7 +185,7 @@ impl Service for MasterClient {
         self.hb(ctx);
     }
 
-    fn call(&mut self, ctx: &mut Context<Self>, msg: Self::Message) -> ServiceResult
+    fn call(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> ServiceResult
     {
         match msg {
             Ok(MasterClientMessage::Request(req)) => {
@@ -444,11 +444,11 @@ pub fn start(cfg: Config) -> bool {
         nix::sys::stat::umask(nix::sys::stat::Mode::from_bits(0o22).unwrap());
     }
 
-    let sys = ctx::init_system();
+    let sys = System::init();
     let cfg = Rc::new(cfg);
 
     // create uds stream
-    let lst = match UnixListener::from_listener(lst, ctx::get_handle()) {
+    let lst = match UnixListener::from_listener(lst, Arbiter::handle()) {
         Ok(lst) => lst,
         Err(err) => {
             error!("Can not create unix socket listener {:?}", err);

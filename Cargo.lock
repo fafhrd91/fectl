@@ -125,7 +125,7 @@ dependencies = [
 [[package]]
 name = "ctx"
 version = "0.1.0"
-source = "git+https://github.com/fafhrd91/ctx.git#7f523609a540187be102c63985e52de167888637"
+source = "git+https://github.com/fafhrd91/ctx.git#453dd4140a0d533b7f89ed636127313dd81d2107"
 dependencies = [
  "bitflags 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",

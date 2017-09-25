@@ -36,9 +36,9 @@ enum State {
 pub struct CommandCenter {
     cfg: Rc<Config>,
     state: State,
-    system: Address<ctx::System>,
+    system: SyncAddress<System>,
     services: HashMap<String, Address<FeService>>,
-    stop_waiter: Option<ctx::Waiter<bool>>,
+    stop_waiter: Option<ctx::Condition<bool>>,
     stopping: usize,
 }
 
@@ -48,7 +48,7 @@ impl CommandCenter {
         CommandCenter {
             cfg: cfg,
             state: State::Starting,
-            system: ctx::get_system(),
+            system: System::get(),
             services: HashMap::new(),
             stop_waiter: None,
             stopping: 0,
@@ -61,9 +61,9 @@ impl CommandCenter {
         }
 
         if success {
-            self.system.send(ctx::SystemExit(0));
+            self.system.send(SystemExit(0));
         } else {
-            self.system.send(ctx::SystemExit(0));
+            self.system.send(SystemExit(0));
         }
     }
 
@@ -135,7 +135,7 @@ impl MessageHandler<Stop> for CommandCenter {
         self.stop(ctx, true);
 
         if self.stop_waiter.is_none() {
-            self.stop_waiter = Some(ctx::Waiter::new());
+            self.stop_waiter = Some(ctx::Condition::new());
         }
 
         if let Some(ref mut waiter) = self.stop_waiter {

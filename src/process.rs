@@ -10,7 +10,7 @@ use serde_json as json;
 use futures::Future;
 use byteorder::{ByteOrder, BigEndian};
 use bytes::{BytesMut, BufMut};
-use tokio_core::reactor::{self, Timeout};
+use tokio_core::reactor::Timeout;
 use tokio_io::codec::{Encoder, Decoder};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::{close, pipe, fork, ForkResult, Pid};
@@ -122,7 +122,7 @@ impl Process {
                  -> (Pid, Option<Address<Process>>)
     {
         // fork process and esteblish communication
-        let (pid, pipe) = match Process::fork(ctx::get_handle(), cfg) {
+        let (pid, pipe) = match Process::fork(cfg) {
             Ok(res) => res,
             Err(err) => {
                 let pid = Pid::from_raw(-1);
@@ -144,7 +144,7 @@ impl Process {
         let addr = Process::init_with(
             r, move |ctx| {
                 ctx.add_future(
-                    Timeout::new(Duration::new(startup_timeout as u64, 0), ctx::get_handle())
+                    Timeout::new(Duration::new(startup_timeout as u64, 0), Arbiter::handle())
                         .unwrap()
                         .map(|_| ProcessMessage::StartupTimeout)
                 );
@@ -165,7 +165,7 @@ impl Process {
         (pid, Some(addr))
     }
 
-    fn fork(handle: &reactor::Handle, cfg: &ServiceConfig) -> Result<(Pid, PipeFile), io::Error>
+    fn fork(cfg: &ServiceConfig) -> Result<(Pid, PipeFile), io::Error>
     {
         let (p_read, p_write, ch_read, ch_write) = Process::create_pipes()?;
 
@@ -187,7 +187,7 @@ impl Process {
         // initialize worker communication channel
         let _ = close(p_read);
         let _ = close(ch_write);
-        let pipe = PipeFile::new(ch_read, p_write, handle);
+        let pipe = PipeFile::new(ch_read, p_write, Arbiter::handle());
 
         Ok((pid, pipe))
     }
@@ -215,7 +215,7 @@ impl Process {
 
     fn kill(&self, ctx: &mut Context<Self>) {
         let fut = Box::new(
-            Timeout::new(Duration::new(1, 0), ctx.handle())
+            Timeout::new(Duration::new(1, 0), Arbiter::handle())
                 .unwrap()
                 .map(|_| ProcessMessage::Kill));
         ctx.add_future(fut);
@@ -238,7 +238,7 @@ impl Service for Process {
         ServiceResult::NotReady
     }
 
-    fn call(&mut self, ctx: &mut Context<Self>, msg: Self::Message) -> ServiceResult
+    fn call(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> ServiceResult
     {
         match msg {
             Ok(ProcessMessage::Message(msg)) => match msg {
@@ -258,7 +258,7 @@ impl Service for Process {
                             self.hb = Instant::now();
                             let fut = Box::new(
                                 Timeout::new(
-                                    Duration::new(HEARTBEAT, 0), ctx.handle())
+                                    Duration::new(HEARTBEAT, 0), Arbiter::handle())
                                     .unwrap()
                                     .map(|_| ProcessMessage::Heartbeat));
                             ctx.add_future(fut);
@@ -336,7 +336,7 @@ impl Service for Process {
                         // send heartbeat to worker process and reset hearbeat timer
                         self.sink.send(WorkerCommand::hb);
                         let fut = Box::new(
-                                Timeout::new(Duration::new(HEARTBEAT, 0), ctx.handle())
+                                Timeout::new(Duration::new(HEARTBEAT, 0), Arbiter::handle())
                                     .unwrap()
                                     .map(|_| ProcessMessage::Heartbeat));
                         ctx.add_future(fut);
@@ -440,7 +440,7 @@ impl MessageHandler<StopProcess> for Process {
 
                 self.state = ProcessState::Stopping;
                 if let Ok(timeout) = Timeout::new(
-                    Duration::new(self.shutdown_timeout, 0), ctx.handle())
+                    Duration::new(self.shutdown_timeout, 0), Arbiter::handle())
                 {
                     ctx.add_future(timeout.map(|_| ProcessMessage::StopTimeout));
                     let _ = kill(self.pid, Signal::SIGTERM);
