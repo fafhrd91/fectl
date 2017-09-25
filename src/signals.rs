@@ -19,11 +19,6 @@ pub enum ProcessEventType {
 
 pub struct ProcessEvent(pub ProcessEventType);
 
-impl Message for ProcessEvent {
-    type Item = ();
-    type Error = ();
-}
-
 pub struct ProcessEvents {
     subscribers: Vec<Box<Subscriber<ProcessEvent>>>,
 }
@@ -92,15 +87,10 @@ impl MessageHandler<ProcessEventType> for ProcessEvents {
     fn handle(&mut self, msg: ProcessEventType, _: &mut Context<Self>)
               -> MessageFuture<Self, ProcessEventType>
     {
-        //match msg {
-        //Ok(ev) => {
         for subscr in self.subscribers.iter() {
             subscr.send(ProcessEvent(msg))
         }
         ().to_result()
-    //}
-      //      Err(_) => ().to_error()
-        //}
     }
 }
 

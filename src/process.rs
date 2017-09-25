@@ -38,15 +38,10 @@ pub struct Process {
     timeout: Duration,
     startup_timeout: u64,
     shutdown_timeout: u64,
-    sink: ctx::Sink<WorkerCommand>,
+    sink: ctx::Sink<WorkerCommand, io::Error>,
 }
 
 impl Actor for Process {}
-
-impl Message for WorkerCommand {
-    type Item = ();
-    type Error = io::Error;
-}
 
 #[derive(Debug)]
 enum ProcessState {
@@ -397,11 +392,6 @@ impl MessageHandler<StartProcess> for Process {
 
 pub struct PauseProcess;
 
-impl Message for PauseProcess {
-    type Item = ();
-    type Error = ();
-}
-
 impl MessageHandler<PauseProcess> for Process {
     type Item = ();
     type Error = ();
@@ -417,11 +407,6 @@ impl MessageHandler<PauseProcess> for Process {
 
 pub struct ResumeProcess;
 
-impl Message for ResumeProcess {
-    type Item = ();
-    type Error = ();
-}
-
 impl MessageHandler<ResumeProcess> for Process {
     type Item = ();
     type Error = ();
@@ -436,11 +421,6 @@ impl MessageHandler<ResumeProcess> for Process {
 }
 
 pub struct StopProcess;
-
-impl Message for StopProcess {
-    type Item = ();
-    type Error = ();
-}
 
 impl MessageHandler<StopProcess> for Process {
     type Item = ();
@@ -477,11 +457,6 @@ impl MessageHandler<StopProcess> for Process {
 }
 
 pub struct QuitProcess;
-
-impl Message for QuitProcess {
-    type Item = ();
-    type Error = ();
-}
 
 impl MessageHandler<QuitProcess> for Process {
     type Item = ();

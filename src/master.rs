@@ -62,14 +62,9 @@ impl Drop for Master {
     }
 }
 
-impl Message for MasterResponse {
-    type Item = ();
-    type Error = io::Error;
-}
-
 struct MasterClient {
     cmd: Address<CommandCenter>,
-    sink: ctx::Sink<MasterResponse>,
+    sink: ctx::Sink<MasterResponse, io::Error>,
 }
 
 impl Actor for MasterClient {
