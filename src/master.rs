@@ -68,11 +68,6 @@ struct MasterClient {
     sink: ctx::Sink<MasterResponse>,
 }
 
-#[derive(Debug)]
-enum MasterClientMessage {
-    Request(MasterRequest),
-}
-
 impl MasterClient {
 
     fn hb(&self, ctx: &mut Context<Self>) {
@@ -175,11 +170,9 @@ impl MasterClient {
     }
 }
 
-//type SinkMessage = Result<MasterResponse, io::Error>;
-
 impl Service for MasterClient {
 
-    type Message = Result<MasterClientMessage, io::Error>;
+    type Message = Result<MasterRequest, io::Error>;
 
     fn start(&mut self, ctx: &mut Context<Self>) {
         self.hb(ctx);
@@ -188,7 +181,7 @@ impl Service for MasterClient {
     fn call(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> ServiceResult
     {
         match msg {
-            Ok(MasterClientMessage::Request(req)) => {
+            Ok(req) => {
                 match req {
                     MasterRequest::Ping =>
                         self.sink.send(MasterResponse::Pong),
@@ -278,7 +271,7 @@ struct MasterTransportCodec;
 
 impl Decoder for MasterTransportCodec
 {
-    type Item = MasterClientMessage;
+    type Item = MasterRequest;
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -292,7 +285,7 @@ impl Decoder for MasterTransportCodec
         if src.len() >= size + 2 {
             src.split_to(2);
             let buf = src.split_to(size);
-            Ok(Some(MasterClientMessage::Request(json::from_slice::<MasterRequest>(&buf)?)))
+            Ok(Some(json::from_slice::<MasterRequest>(&buf)?))
         } else {
             Ok(None)
         }
