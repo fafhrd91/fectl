@@ -31,24 +31,28 @@ pub struct Master {
     cmd: Address<CommandCenter>,
 }
 
-impl Actor for Master {
+impl Actor for Master {}
 
-    type Message = Result<(UnixStream, std::os::unix::net::SocketAddr), io::Error>;
+impl StreamHandler<(UnixStream, std::os::unix::net::SocketAddr)> for Master {}
 
-    fn call(&mut self, msg: Self::Message, _: &mut Context<Self>) -> ActorStatus
+impl MessageHandler<(UnixStream, std::os::unix::net::SocketAddr)> for Master {
+    type Item = ();
+    type Error = ();
+    type InputError = io::Error;
+
+    fn handle(&mut self, msg: (UnixStream, std::os::unix::net::SocketAddr), _: &mut Context<Self>)
+              -> MessageFuture<Self, (UnixStream, std::os::unix::net::SocketAddr)>
     {
-        match msg {
-            Ok((stream, _)) => {
-                let cmd = self.cmd.clone();
-                let (r, w) = stream.ctx_framed(MasterTransportCodec, MasterTransportCodec);
-                MasterClient::init_with(
-                    r, move |ctx| MasterClient{cmd: cmd,
-                                               sink: ctx.add_sink(w)}
-                );
+        let cmd = self.cmd.clone();
+        let (r, w) = msg.0.ctx_framed(MasterTransportCodec, MasterTransportCodec);
+        MasterClient::init(
+            move |ctx| {
+                ctx.add_stream(r);
+                MasterClient{cmd: cmd,
+                             sink: ctx.add_sink(w)}
             }
-            _ => (),
-        }
-        ActorStatus::NotReady
+        );
+        ().to_result()
     }
 }
 
@@ -66,6 +70,13 @@ impl Message for MasterResponse {
 struct MasterClient {
     cmd: Address<CommandCenter>,
     sink: ctx::Sink<MasterResponse>,
+}
+
+impl Actor for MasterClient {
+
+    fn start(&mut self, ctx: &mut Context<Self>) {
+        self.hb(ctx);
+    }
 }
 
 impl MasterClient {
@@ -170,101 +181,110 @@ impl MasterClient {
     }
 }
 
-impl Actor for MasterClient {
-
-    type Message = Result<MasterRequest, io::Error>;
+impl StreamHandler<MasterRequest> for MasterClient {
 
     fn start(&mut self, ctx: &mut Context<Self>) {
         self.hb(ctx);
     }
 
-    fn call(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> ActorStatus
-    {
-        match msg {
-            Ok(req) => {
-                match req {
-                    MasterRequest::Ping =>
-                        self.sink.send(MasterResponse::Pong),
-                    MasterRequest::Start(name) =>
-                        self.start_service(name, ctx),
-                    MasterRequest::Reload(name) =>
-                        self.reload(name, ctx, true),
-                    MasterRequest::Restart(name) =>
-                        self.reload(name, ctx, false),
-                    MasterRequest::Stop(name) =>
-                        self.stop(name, ctx),
-                    MasterRequest::Pause(name) => {
-                        info!("Client command: Pause service '{}'", name);
-                        self.cmd.call(cmd::PauseService(name))
-                            .then(|res, srv: &mut MasterClient, _| {
-                                match res {
-                                    Err(_) => (),
-                                    Ok(Err(err)) => srv.handle_error(err),
-                                    Ok(Ok(_)) => srv.sink.send(MasterResponse::Done),
-                                };
-                                fut::ok(())
-                            }).spawn(ctx);
-                    }
-                    MasterRequest::Resume(name) => {
-                        info!("Client command: Resume service '{}'", name);
-                        self.cmd.call(cmd::ResumeService(name))
-                            .then(|res, srv: &mut MasterClient, _| {
-                                match res {
-                                    Err(_) => (),
-                                    Ok(Err(err)) => srv.handle_error(err),
-                                    Ok(Ok(_)) => srv.sink.send(MasterResponse::Done),
-                                };
-                                fut::ok(())
-                            }).spawn(ctx);
-                    }
-                    MasterRequest::Status(name) => {
-                        debug!("Client command: Service status '{}'", name);
-                        self.cmd.call(cmd::StatusService(name))
-                            .then(|res, srv: &mut MasterClient, _| {
-                                match res {
-                                    Err(_) => (),
-                                    Ok(Err(err)) => srv.handle_error(err),
-                                    Ok(Ok(status)) => srv.sink.send(
-                                        MasterResponse::ServiceStatus(status)),
-                                };
-                                fut::ok(())
-                            }).spawn(ctx);
-                    }
-                    MasterRequest::SPid(name) => {
-                        debug!("Client command: Service status '{}'", name);
-                        self.cmd.call(cmd::ServicePids(name))
-                            .then(|res, srv: &mut MasterClient, _| {
-                                match res {
-                                    Err(_) => (),
-                                    Ok(Err(err)) => srv.handle_error(err),
-                                    Ok(Ok(pids)) => srv.sink.send(
-                                        MasterResponse::ServiceWorkerPids(pids)),
-                                };
-                                fut::ok(())
-                            }).spawn(ctx);
-                    }
-                    MasterRequest::Pid => {
-                        self.sink.send(MasterResponse::Pid(
-                            format!("{}", nix::unistd::getpid())));
-                    },
-                    MasterRequest::Version => {
-                        self.sink.send(MasterResponse::Version(
-                            format!("{} {}", PKG_INFO.name, PKG_INFO.version)));
-                    },
-                    MasterRequest::Quit => {
-                        self.cmd.call(cmd::Stop)
-                            .then(|_, srv: &mut MasterClient, _| {
-                                srv.sink.send(MasterResponse::Done);
-                                fut::ok(())
-                            }).spawn(ctx);
-                    }
-                };
-                ActorStatus::NotReady
-            },
-            Err(_) => ActorStatus::Done,
-        }
+    fn finished(&mut self, ctx: &mut Context<Self>) {
+        ctx.set_done()
     }
 }
+
+impl MessageHandler<MasterRequest> for MasterClient {
+    type Item = ();
+    type Error = ();
+    type InputError = io::Error;
+
+    fn error(&mut self, _: io::Error, ctx: &mut Context<Self>) {
+        ctx.set_done()
+    }
+
+    fn handle(&mut self, msg: MasterRequest, ctx: &mut Context<Self>)
+              -> MessageFuture<Self, MasterRequest>
+    {
+        match msg {
+            MasterRequest::Ping =>
+                self.sink.send(MasterResponse::Pong),
+            MasterRequest::Start(name) =>
+                self.start_service(name, ctx),
+            MasterRequest::Reload(name) =>
+                self.reload(name, ctx, true),
+            MasterRequest::Restart(name) =>
+                self.reload(name, ctx, false),
+            MasterRequest::Stop(name) =>
+                self.stop(name, ctx),
+            MasterRequest::Pause(name) => {
+                info!("Client command: Pause service '{}'", name);
+                self.cmd.call(cmd::PauseService(name))
+                    .then(|res, srv: &mut MasterClient, _| {
+                        match res {
+                            Err(_) => (),
+                            Ok(Err(err)) => srv.handle_error(err),
+                            Ok(Ok(_)) => srv.sink.send(MasterResponse::Done),
+                        };
+                        fut::ok(())
+                    }).spawn(ctx);
+            }
+            MasterRequest::Resume(name) => {
+                info!("Client command: Resume service '{}'", name);
+                self.cmd.call(cmd::ResumeService(name))
+                    .then(|res, srv: &mut MasterClient, _| {
+                        match res {
+                            Err(_) => (),
+                            Ok(Err(err)) => srv.handle_error(err),
+                            Ok(Ok(_)) => srv.sink.send(MasterResponse::Done),
+                        };
+                        fut::ok(())
+                    }).spawn(ctx);
+            }
+            MasterRequest::Status(name) => {
+                debug!("Client command: Service status '{}'", name);
+                self.cmd.call(cmd::StatusService(name))
+                    .then(|res, srv: &mut MasterClient, _| {
+                        match res {
+                            Err(_) => (),
+                            Ok(Err(err)) => srv.handle_error(err),
+                            Ok(Ok(status)) => srv.sink.send(
+                                MasterResponse::ServiceStatus(status)),
+                        };
+                        fut::ok(())
+                    }).spawn(ctx);
+            }
+            MasterRequest::SPid(name) => {
+                debug!("Client command: Service status '{}'", name);
+                self.cmd.call(cmd::ServicePids(name))
+                    .then(|res, srv: &mut MasterClient, _| {
+                        match res {
+                            Err(_) => (),
+                            Ok(Err(err)) => srv.handle_error(err),
+                            Ok(Ok(pids)) => srv.sink.send(
+                                MasterResponse::ServiceWorkerPids(pids)),
+                        };
+                        fut::ok(())
+                    }).spawn(ctx);
+            }
+            MasterRequest::Pid => {
+                self.sink.send(MasterResponse::Pid(
+                    format!("{}", nix::unistd::getpid())));
+            },
+            MasterRequest::Version => {
+                self.sink.send(MasterResponse::Version(
+                    format!("{} {}", PKG_INFO.name, PKG_INFO.version)));
+            },
+            MasterRequest::Quit => {
+                self.cmd.call(cmd::Stop)
+                    .then(|_, srv: &mut MasterClient, _| {
+                        srv.sink.send(MasterResponse::Done);
+                        fut::ok(())
+                    }).spawn(ctx);
+            }
+        };
+        ().to_result()
+    }
+}
+
 
 /// Codec for Master transport
 struct MasterTransportCodec;

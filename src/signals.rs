@@ -36,8 +36,6 @@ impl ProcessEvents {
 
 impl Actor for ProcessEvents {
 
-    type Message = Result<ProcessEventType, ()>;
-
     fn start(&mut self, ctx: &mut Context<Self>) {
         let handle = Arbiter::handle();
 
@@ -82,29 +80,36 @@ impl Actor for ProcessEvents {
             .spawn(ctx);
     }
 
-    fn call(&mut self, msg: Self::Message, _: &mut Context<Self>) -> ActorStatus
+}
+
+impl StreamHandler<ProcessEventType> for ProcessEvents {}
+
+impl MessageHandler<ProcessEventType> for ProcessEvents {
+    type Item = ();
+    type Error = ();
+    type InputError = ();
+
+    fn handle(&mut self, msg: ProcessEventType, _: &mut Context<Self>)
+              -> MessageFuture<Self, ProcessEventType>
     {
-        match msg {
-            Ok(ev) => {
-                for subscr in self.subscribers.iter() {
-                    subscr.send(ProcessEvent(ev))
-                }
-                ActorStatus::NotReady
-            }
-            Err(_) => ActorStatus::Done
+        //match msg {
+        //Ok(ev) => {
+        for subscr in self.subscribers.iter() {
+            subscr.send(ProcessEvent(msg))
         }
+        ().to_result()
+    //}
+      //      Err(_) => ().to_error()
+        //}
     }
 }
 
-
 pub struct Subscribe(pub Box<Subscriber<ProcessEvent>>);
 
-impl Message for Subscribe {
+impl MessageHandler<Subscribe> for ProcessEvents {
     type Item = ();
     type Error = ();
-}
-
-impl MessageHandler<Subscribe> for ProcessEvents {
+    type InputError = ();
 
     fn handle(&mut self, msg: Subscribe,
               _: &mut Context<ProcessEvents>) -> MessageFuture<Self, Subscribe>

@@ -41,6 +41,8 @@ pub struct Process {
     sink: ctx::Sink<WorkerCommand>,
 }
 
+impl Actor for Process {}
+
 impl Message for WorkerCommand {
     type Item = ();
     type Error = io::Error;
@@ -141,8 +143,9 @@ impl Process {
 
         // start Process service
         let (r, w) = pipe.ctx_framed(TransportCodec, TransportCodec);
-        let addr = Process::init_with(
-            r, move |ctx| {
+        let addr = Process::init(
+            move |ctx| {
+                ctx.add_stream(r);
                 ctx.add_future(
                     Timeout::new(Duration::new(startup_timeout as u64, 0), Arbiter::handle())
                         .unwrap()
@@ -161,7 +164,6 @@ impl Process {
                     sink: ctx.add_sink(w)
                 }
             });
-
         (pid, Some(addr))
     }
 
@@ -228,20 +230,28 @@ impl Drop for Process {
     }
 }
 
-impl Actor for Process {
+impl StreamHandler<ProcessMessage> for Process {
 
-    type Message = Result<ProcessMessage, io::Error>;
-
-    fn finished(&mut self, ctx: &mut Context<Self>) -> ActorStatus
+    fn finished(&mut self, ctx: &mut Context<Self>)
     {
         self.kill(ctx);
-        ActorStatus::NotReady
+    }
+}
+
+impl MessageHandler<ProcessMessage> for Process {
+    type Item = ();
+    type Error = ();
+    type InputError = io::Error;
+
+    fn error(&mut self, _: io::Error, ctx: &mut Context<Self>) {
+        self.kill(ctx)
     }
 
-    fn call(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> ActorStatus
+    fn handle(&mut self, msg: ProcessMessage, ctx: &mut Context<Self>)
+              -> MessageFuture<Self, ProcessMessage>
     {
         match msg {
-            Ok(ProcessMessage::Message(msg)) => match msg {
+            ProcessMessage::Message(msg) => match msg {
                 WorkerMessage::forked => {
                     debug!("Worker forked (pid:{})", self.pid);
                     self.sink.send(WorkerCommand::prepare);
@@ -292,7 +302,7 @@ impl Actor for Process {
                             self.idx, self.pid, ProcessError::ConfigError(msg)));
                 }
             }
-            Ok(ProcessMessage::StartupTimeout) => {
+            ProcessMessage::StartupTimeout => {
                 match self.state {
                     ProcessState::Starting => {
                         error!("Worker startup timeout after {} secs", self.startup_timeout);
@@ -302,12 +312,13 @@ impl Actor for Process {
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
-                        return ActorStatus::Done
+                        ctx.set_done();
+                        return ().to_result()
                     },
                     _ => ()
                 }
             }
-            Ok(ProcessMessage::StopTimeout) => {
+            ProcessMessage::StopTimeout => {
                 match self.state {
                     ProcessState::Stopping => {
                         info!("Worker shutdown timeout aftre {} secs", self.shutdown_timeout);
@@ -317,12 +328,13 @@ impl Actor for Process {
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
-                        return ActorStatus::Done
+                        ctx.set_done();
+                        return ().to_result()
                     },
                     _ => ()
                 }
             }
-            Ok(ProcessMessage::Heartbeat) => {
+            ProcessMessage::Heartbeat => {
                 // makes sense only in running state
                 if let ProcessState::Running = self.state {
                     if Instant::now().duration_since(self.hb) > self.timeout {
@@ -343,24 +355,22 @@ impl Actor for Process {
                     }
                 }
             }
-            Ok(ProcessMessage::Kill) => {
+            ProcessMessage::Kill => {
                 let _ = kill(self.pid, Signal::SIGKILL);
-                return ActorStatus::Done
+                ctx.set_done();
+                return ().to_result()
             }
-            Err(_) => self.kill(ctx),
         }
-        ActorStatus::NotReady
+        ().to_result()
     }
 }
 
 pub struct SendCommand(pub WorkerCommand);
 
-impl Message for SendCommand {
+impl MessageHandler<SendCommand> for Process {
     type Item = ();
     type Error = ();
-}
-
-impl MessageHandler<SendCommand> for Process {
+    type InputError = ();
 
     fn handle(&mut self, msg: SendCommand, _: &mut Context<Process>)
               -> MessageFuture<Self, SendCommand>
@@ -372,12 +382,10 @@ impl MessageHandler<SendCommand> for Process {
 
 pub struct StartProcess;
 
-impl Message for StartProcess {
+impl MessageHandler<StartProcess> for Process {
     type Item = ();
     type Error = ();
-}
-
-impl MessageHandler<StartProcess> for Process {
+    type InputError = ();
 
     fn handle(&mut self, _: StartProcess, _: &mut Context<Process>)
               -> MessageFuture<Self, StartProcess>
@@ -395,6 +403,9 @@ impl Message for PauseProcess {
 }
 
 impl MessageHandler<PauseProcess> for Process {
+    type Item = ();
+    type Error = ();
+    type InputError = ();
 
     fn handle(&mut self, _: PauseProcess, _: &mut Context<Process>)
               -> MessageFuture<Self, PauseProcess>
@@ -412,6 +423,9 @@ impl Message for ResumeProcess {
 }
 
 impl MessageHandler<ResumeProcess> for Process {
+    type Item = ();
+    type Error = ();
+    type InputError = ();
 
     fn handle(&mut self, _: ResumeProcess, _: &mut Context<Process>)
               -> MessageFuture<Self, ResumeProcess>
@@ -429,6 +443,9 @@ impl Message for StopProcess {
 }
 
 impl MessageHandler<StopProcess> for Process {
+    type Item = ();
+    type Error = ();
+    type InputError = ();
 
     fn handle(&mut self, _: StopProcess, ctx: &mut Context<Process>)
               -> MessageFuture<Self, StopProcess>
@@ -467,6 +484,9 @@ impl Message for QuitProcess {
 }
 
 impl MessageHandler<QuitProcess> for Process {
+    type Item = ();
+    type Error = ();
+    type InputError = ();
 
     fn handle(&mut self, _: QuitProcess, ctx: &mut Context<Process>)
               -> MessageFuture<Self, QuitProcess>
