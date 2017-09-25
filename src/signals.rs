@@ -34,7 +34,7 @@ impl ProcessEvents {
     }
 }
 
-impl Service for ProcessEvents {
+impl Actor for ProcessEvents {
 
     type Message = Result<ProcessEventType, ()>;
 
@@ -43,7 +43,7 @@ impl Service for ProcessEvents {
 
         // SIGINT
         tokio_signal::ctrl_c(handle).map_err(|_| ())
-            .ctxfuture()
+            .actfuture()
             .map(|sig, _: &mut ProcessEvents, ctx: &mut Context<Self>|
                  ctx.add_stream(
                      sig.map(|_| ProcessEventType::Int).map_err(|_| ())))
@@ -51,7 +51,7 @@ impl Service for ProcessEvents {
 
         // SIGHUP
         Signal::new(libc::SIGHUP, handle).map_err(|_| ())
-            .ctxfuture()
+            .actfuture()
             .map(|sig, _: &mut ProcessEvents, ctx: &mut Context<Self>|
                  ctx.add_stream(
                      sig.map(|_| ProcessEventType::Hup).map_err(|_| ())))
@@ -59,7 +59,7 @@ impl Service for ProcessEvents {
 
         // SIGTERM
         Signal::new(libc::SIGTERM, handle).map_err(|_| ())
-            .ctxfuture()
+            .actfuture()
             .map(|sig, _: &mut Self, ctx: &mut Context<Self>|
                  ctx.add_stream(
                      sig.map(|_| ProcessEventType::Term).map_err(|_| ())))
@@ -67,7 +67,7 @@ impl Service for ProcessEvents {
 
         // SIGQUIT
         Signal::new(libc::SIGQUIT, handle).map_err(|_| ())
-            .ctxfuture()
+            .actfuture()
             .map(|sig, _: &mut ProcessEvents, ctx: &mut Context<Self>|
                  ctx.add_stream(
                      sig.map(|_| ProcessEventType::Quit).map_err(|_| ())))
@@ -75,23 +75,23 @@ impl Service for ProcessEvents {
 
         // SIGCHLD
         Signal::new(libc::SIGCHLD, handle).map_err(|_| ())
-            .ctxfuture()
+            .actfuture()
             .map(|sig, _: &mut ProcessEvents, ctx: &mut Context<Self>|
                  ctx.add_stream(
                      sig.map(|_| ProcessEventType::Child).map_err(|_| ())))
             .spawn(ctx);
     }
 
-    fn call(&mut self, msg: Self::Message, _: &mut Context<Self>) -> ServiceResult
+    fn call(&mut self, msg: Self::Message, _: &mut Context<Self>) -> ActorStatus
     {
         match msg {
             Ok(ev) => {
                 for subscr in self.subscribers.iter() {
                     subscr.send(ProcessEvent(ev))
                 }
-                ServiceResult::NotReady
+                ActorStatus::NotReady
             }
-            Err(_) => ServiceResult::Done
+            Err(_) => ActorStatus::Done
         }
     }
 }
@@ -107,7 +107,7 @@ impl Message for Subscribe {
 impl MessageHandler<Subscribe> for ProcessEvents {
 
     fn handle(&mut self, msg: Subscribe,
-              _: &mut Context<ProcessEvents>) -> MessageFuture<Subscribe, Self>
+              _: &mut Context<ProcessEvents>) -> MessageFuture<Self, Subscribe>
     {
         self.subscribers.push(msg.0);
         ().to_result()

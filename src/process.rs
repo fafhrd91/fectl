@@ -228,17 +228,17 @@ impl Drop for Process {
     }
 }
 
-impl Service for Process {
+impl Actor for Process {
 
     type Message = Result<ProcessMessage, io::Error>;
 
-    fn finished(&mut self, ctx: &mut Context<Self>) -> ServiceResult
+    fn finished(&mut self, ctx: &mut Context<Self>) -> ActorStatus
     {
         self.kill(ctx);
-        ServiceResult::NotReady
+        ActorStatus::NotReady
     }
 
-    fn call(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> ServiceResult
+    fn call(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> ActorStatus
     {
         match msg {
             Ok(ProcessMessage::Message(msg)) => match msg {
@@ -302,7 +302,7 @@ impl Service for Process {
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
-                        return ServiceResult::Done
+                        return ActorStatus::Done
                     },
                     _ => ()
                 }
@@ -317,7 +317,7 @@ impl Service for Process {
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
-                        return ServiceResult::Done
+                        return ActorStatus::Done
                     },
                     _ => ()
                 }
@@ -345,11 +345,11 @@ impl Service for Process {
             }
             Ok(ProcessMessage::Kill) => {
                 let _ = kill(self.pid, Signal::SIGKILL);
-                return ServiceResult::Done
+                return ActorStatus::Done
             }
             Err(_) => self.kill(ctx),
         }
-        ServiceResult::NotReady
+        ActorStatus::NotReady
     }
 }
 
@@ -363,7 +363,7 @@ impl Message for SendCommand {
 impl MessageHandler<SendCommand> for Process {
 
     fn handle(&mut self, msg: SendCommand, _: &mut Context<Process>)
-              -> MessageFuture<SendCommand, Self>
+              -> MessageFuture<Self, SendCommand>
     {
         self.sink.send(msg.0);
         ().to_result()
@@ -380,7 +380,7 @@ impl Message for StartProcess {
 impl MessageHandler<StartProcess> for Process {
 
     fn handle(&mut self, _: StartProcess, _: &mut Context<Process>)
-              -> MessageFuture<StartProcess, Self>
+              -> MessageFuture<Self, StartProcess>
     {
         self.sink.send(WorkerCommand::start);
         ().to_result()
@@ -397,7 +397,7 @@ impl Message for PauseProcess {
 impl MessageHandler<PauseProcess> for Process {
 
     fn handle(&mut self, _: PauseProcess, _: &mut Context<Process>)
-              -> MessageFuture<PauseProcess, Self>
+              -> MessageFuture<Self, PauseProcess>
     {
         self.sink.send(WorkerCommand::pause);
         ().to_result()
@@ -414,7 +414,7 @@ impl Message for ResumeProcess {
 impl MessageHandler<ResumeProcess> for Process {
 
     fn handle(&mut self, _: ResumeProcess, _: &mut Context<Process>)
-              -> MessageFuture<ResumeProcess, Self>
+              -> MessageFuture<Self, ResumeProcess>
     {
         self.sink.send(WorkerCommand::resume);
         ().to_result()
@@ -431,7 +431,7 @@ impl Message for StopProcess {
 impl MessageHandler<StopProcess> for Process {
 
     fn handle(&mut self, _: StopProcess, ctx: &mut Context<Process>)
-              -> MessageFuture<StopProcess, Self>
+              -> MessageFuture<Self, StopProcess>
     {
         info!("Stopping worker: (pid:{})", self.pid);
         match self.state {
@@ -469,7 +469,7 @@ impl Message for QuitProcess {
 impl MessageHandler<QuitProcess> for Process {
 
     fn handle(&mut self, _: QuitProcess, ctx: &mut Context<Process>)
-              -> MessageFuture<QuitProcess, Self>
+              -> MessageFuture<Self, QuitProcess>
     {
         let _ = kill(self.pid, Signal::SIGQUIT);
         self.kill(ctx);

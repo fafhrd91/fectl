@@ -103,7 +103,7 @@ impl Message for ServicePids {
 impl MessageHandler<ServicePids> for CommandCenter {
 
     fn handle(&mut self, msg: ServicePids,
-              _: &mut Context<CommandCenter>) -> MessageFuture<ServicePids, Self>
+              _: &mut Context<CommandCenter>) -> MessageFuture<Self, ServicePids>
     {
         match self.state {
             State::Running => {
@@ -130,7 +130,7 @@ impl Message for Stop {
 
 impl MessageHandler<Stop> for CommandCenter {
 
-    fn handle(&mut self, _: Stop, ctx: &mut Context<Self>) -> MessageFuture<Stop, Self>
+    fn handle(&mut self, _: Stop, ctx: &mut Context<Self>) -> MessageFuture<Self, Stop>
     {
         self.stop(ctx, true);
 
@@ -140,7 +140,7 @@ impl MessageHandler<Stop> for CommandCenter {
 
         if let Some(ref mut waiter) = self.stop_waiter {
             return
-                waiter.wait().ctxfuture().then(|res, _, _| match res {
+                waiter.wait().actfuture().then(|res, _, _| match res {
                     Ok(res) => fut::result(Ok(res)),
                     Err(_) => fut::result(Err(())),
                 }).into()
@@ -162,7 +162,7 @@ impl Message for StartService {
 impl MessageHandler<StartService> for CommandCenter {
 
     fn handle(&mut self, msg: StartService,
-              _: &mut Context<CommandCenter>) -> MessageFuture<StartService, Self>
+              _: &mut Context<CommandCenter>) -> MessageFuture<Self, StartService>
     {
         match self.state {
             State::Running => {
@@ -197,7 +197,7 @@ impl Message for StopService {
 impl MessageHandler<StopService> for CommandCenter {
 
     fn handle(&mut self, msg: StopService,
-              _: &mut Context<CommandCenter>) -> MessageFuture<StopService, Self>
+              _: &mut Context<CommandCenter>) -> MessageFuture<Self, StopService>
     {
         match self.state {
             State::Running => {
@@ -231,7 +231,7 @@ impl Message for StatusService {
 impl MessageHandler<StatusService> for CommandCenter {
 
     fn handle(&mut self, msg: StatusService,
-              _: &mut Context<CommandCenter>) -> MessageFuture<StatusService, Self>
+              _: &mut Context<CommandCenter>) -> MessageFuture<Self, StatusService>
     {
         match self.state {
             State::Running => {
@@ -262,7 +262,7 @@ impl Message for PauseService {
 impl MessageHandler<PauseService> for CommandCenter {
 
     fn handle(&mut self, msg: PauseService,
-              _: &mut Context<CommandCenter>) -> MessageFuture<PauseService, Self>
+              _: &mut Context<CommandCenter>) -> MessageFuture<Self, PauseService>
     {
         match self.state {
             State::Running => {
@@ -297,7 +297,7 @@ impl Message for ResumeService {
 impl MessageHandler<ResumeService> for CommandCenter {
 
     fn handle(&mut self, msg: ResumeService,
-              _: &mut Context<CommandCenter>) -> MessageFuture<ResumeService, Self>
+              _: &mut Context<CommandCenter>) -> MessageFuture<Self, ResumeService>
     {
         match self.state {
             State::Running => {
@@ -332,7 +332,7 @@ impl Message for ReloadService {
 impl MessageHandler<ReloadService> for CommandCenter {
 
     fn handle(&mut self, msg: ReloadService, _: &mut Context<Self>)
-              -> MessageFuture<ReloadService, Self>
+              -> MessageFuture<Self, ReloadService>
     {
         match self.state {
             State::Running => {
@@ -367,7 +367,7 @@ impl Message for ReloadAll {
 
 impl MessageHandler<ReloadAll> for CommandCenter {
 
-    fn handle(&mut self, _: ReloadAll, _: &mut Context<Self>) -> MessageFuture<ReloadAll, Self>
+    fn handle(&mut self, _: ReloadAll, _: &mut Context<Self>) -> MessageFuture<Self, ReloadAll>
     {
         match self.state {
             State::Running => {
@@ -386,7 +386,7 @@ impl MessageHandler<ReloadAll> for CommandCenter {
 impl MessageHandler<ProcessEvent> for CommandCenter {
 
     fn handle(&mut self, msg: ProcessEvent, ctx: &mut Context<Self>)
-              -> MessageFuture<ProcessEvent, Self>
+              -> MessageFuture<Self, ProcessEvent>
     {
         match msg.0 {
             ProcessEventType::Int => {
@@ -442,7 +442,7 @@ impl MessageHandler<ProcessEvent> for CommandCenter {
 }
 
 
-impl Service for CommandCenter {
+impl Actor for CommandCenter {
 
     type Message = DefaultMessage;
 
@@ -458,10 +458,10 @@ impl Service for CommandCenter {
         self.state = State::Running;
     }
 
-    fn finished(&mut self, _: &mut Context<Self>) -> ServiceResult
+    fn finished(&mut self, _: &mut Context<Self>) -> ActorStatus
     {
         self.exit(true);
 
-        ServiceResult::Done
+        ActorStatus::Done
     }
 }

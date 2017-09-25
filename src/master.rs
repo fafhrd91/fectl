@@ -31,11 +31,11 @@ pub struct Master {
     cmd: Address<CommandCenter>,
 }
 
-impl Service for Master {
+impl Actor for Master {
 
     type Message = Result<(UnixStream, std::os::unix::net::SocketAddr), io::Error>;
 
-    fn call(&mut self, msg: Self::Message, _: &mut Context<Self>) -> ServiceResult
+    fn call(&mut self, msg: Self::Message, _: &mut Context<Self>) -> ActorStatus
     {
         match msg {
             Ok((stream, _)) => {
@@ -48,7 +48,7 @@ impl Service for Master {
             }
             _ => (),
         }
-        ServiceResult::NotReady
+        ActorStatus::NotReady
     }
 }
 
@@ -73,7 +73,7 @@ impl MasterClient {
     fn hb(&self, ctx: &mut Context<Self>) {
         let fut = Timeout::new(Duration::new(1, 0), Arbiter::handle())
             .unwrap()
-            .ctxfuture()
+            .actfuture()
             .then(|_, srv: &mut MasterClient, ctx: &mut Context<Self>| {
                 srv.sink.send(MasterResponse::Pong);
                 srv.hb(ctx);
@@ -170,7 +170,7 @@ impl MasterClient {
     }
 }
 
-impl Service for MasterClient {
+impl Actor for MasterClient {
 
     type Message = Result<MasterRequest, io::Error>;
 
@@ -178,7 +178,7 @@ impl Service for MasterClient {
         self.hb(ctx);
     }
 
-    fn call(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> ServiceResult
+    fn call(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> ActorStatus
     {
         match msg {
             Ok(req) => {
@@ -259,9 +259,9 @@ impl Service for MasterClient {
                             }).spawn(ctx);
                     }
                 };
-                ServiceResult::NotReady
+                ActorStatus::NotReady
             },
-            Err(_) => ServiceResult::Done,
+            Err(_) => ActorStatus::Done,
         }
     }
 }

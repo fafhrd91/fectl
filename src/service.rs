@@ -196,7 +196,7 @@ impl FeService {
 }
 
 
-impl Service for FeService {
+impl Actor for FeService {
 
     type Message = DefaultMessage;
 
@@ -219,7 +219,7 @@ impl Message for ProcessMessage {
 impl MessageHandler<ProcessMessage> for FeService {
 
     fn handle(&mut self, msg: ProcessMessage, _: &mut Context<Self>)
-              -> MessageFuture<ProcessMessage, Self>
+              -> MessageFuture<Self, ProcessMessage>
     {
         self.workers[msg.0].message(msg.1, &msg.2);
         self.update();
@@ -237,7 +237,7 @@ impl Message for ProcessFailed {
 impl MessageHandler<ProcessFailed> for FeService {
 
     fn handle(&mut self, msg: ProcessFailed, _: &mut Context<Self>)
-              -> MessageFuture<ProcessFailed, Self>
+              -> MessageFuture<Self, ProcessFailed>
     {
         self.workers[msg.0].exited(msg.1, &msg.2);
         self.update();
@@ -255,7 +255,7 @@ impl Message for ProcessLoaded {
 impl MessageHandler<ProcessLoaded> for FeService {
 
     fn handle(&mut self, msg: ProcessLoaded, _: &mut Context<Self>)
-              -> MessageFuture<ProcessLoaded, Self>
+              -> MessageFuture<Self, ProcessLoaded>
     {
         self.workers[msg.0].loaded(msg.1);
         self.update();
@@ -273,7 +273,7 @@ impl Message for ProcessExited {
 impl MessageHandler<ProcessExited> for FeService {
 
     fn handle(&mut self, msg: ProcessExited, _: &mut Context<Self>)
-              -> MessageFuture<ProcessExited, Self>
+              -> MessageFuture<Self, ProcessExited>
     {
         for worker in self.workers.iter_mut() {
             worker.exited(msg.0, &msg.1);
@@ -293,7 +293,7 @@ impl Message for Pids {
 
 impl MessageHandler<Pids> for FeService {
 
-    fn handle(&mut self, _: Pids, _: &mut Context<Self>) -> MessageFuture<Pids, Self>
+    fn handle(&mut self, _: Pids, _: &mut Context<Self>) -> MessageFuture<Self, Pids>
     {
         let mut pids = Vec::new();
         for worker in self.workers.iter() {
@@ -315,7 +315,7 @@ impl Message for Status {
 
 impl MessageHandler<Status> for FeService {
 
-    fn handle(&mut self, _: Status, _: &mut Context<Self>) -> MessageFuture<Status, Self>
+    fn handle(&mut self, _: Status, _: &mut Context<Self>) -> MessageFuture<Self, Status>
     {
         let mut events: Vec<(String, Vec<Event>)> = Vec::new();
         for worker in self.workers.iter() {
@@ -341,11 +341,11 @@ impl Message for Start {
 
 impl MessageHandler<Start> for FeService {
 
-    fn handle(&mut self, _: Start, _: &mut Context<Self>) -> MessageFuture<Start, Self>
+    fn handle(&mut self, _: Start, _: &mut Context<Self>) -> MessageFuture<Self, Start>
     {
         match self.state {
             ServiceState::Starting(ref mut task) => {
-                task.wait().ctxfuture().then(|res, _, _| match res {
+                task.wait().actfuture().then(|res, _, _| match res {
                     Ok(res) => fut::result(Ok(res)),
                     Err(_) => fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
@@ -359,7 +359,7 @@ impl MessageHandler<Start> for FeService {
                 for worker in self.workers.iter_mut() {
                     worker.start(Reason::ConsoleRequest);
                 }
-                rx.ctxfuture().then(|res, _, _| match res {
+                rx.actfuture().then(|res, _, _| match res {
                     Ok(res) => fut::result(Ok(res)),
                     Err(_) => fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
@@ -379,7 +379,7 @@ impl Message for Pause {
 
 impl MessageHandler<Pause> for FeService {
 
-    fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> MessageFuture<Pause, Self>
+    fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> MessageFuture<Self, Pause>
     {
         match self.state {
             ServiceState::Running => {
@@ -405,7 +405,7 @@ impl Message for Resume {
 
 impl MessageHandler<Resume> for FeService {
 
-    fn handle(&mut self, _: Resume, _: &mut Context<Self>) -> MessageFuture<Resume, Self>
+    fn handle(&mut self, _: Resume, _: &mut Context<Self>) -> MessageFuture<Self, Resume>
     {
         match self.state {
             ServiceState::Running => {
@@ -431,11 +431,11 @@ impl Message for Reload {
 
 impl MessageHandler<Reload> for FeService {
 
-    fn handle(&mut self, msg: Reload, _: &mut Context<Self>) -> MessageFuture<Reload, Self>
+    fn handle(&mut self, msg: Reload, _: &mut Context<Self>) -> MessageFuture<Self, Reload>
     {
         match self.state {
             ServiceState::Reloading(ref mut task) => {
-                task.wait().ctxfuture().then(|res, _, _| match res {
+                task.wait().actfuture().then(|res, _, _| match res {
                     Ok(res) => fut::result(Ok(res)),
                     Err(_) => fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
@@ -449,7 +449,7 @@ impl MessageHandler<Reload> for FeService {
                 for worker in self.workers.iter_mut() {
                     worker.reload(msg.0, Reason::ConsoleRequest);
                 }
-                rx.ctxfuture().then(|res, _, _| match res {
+                rx.actfuture().then(|res, _, _| match res {
                     Ok(res) => fut::result(Ok(res)),
                     Err(_) => fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
@@ -469,7 +469,7 @@ impl Message for Stop {
 
 impl MessageHandler<Stop> for FeService {
 
-    fn handle(&mut self, msg: Stop, _: &mut Context<Self>) -> MessageFuture<Stop, Self>
+    fn handle(&mut self, msg: Stop, _: &mut Context<Self>) -> MessageFuture<Self, Stop>
     {
         let state = std::mem::replace(&mut self.state, ServiceState::Stopped);
 
@@ -482,7 +482,7 @@ impl MessageHandler<Stop> for FeService {
                 let rx = task.wait();
                 self.state = ServiceState::Stopping(task);
                 return
-                    rx.ctxfuture().then(|res, _, _| match res {
+                    rx.actfuture().then(|res, _, _| match res {
                         Ok(_) => fut::ok(()),
                         Err(_) => fut::err(()),
                     }).into();
@@ -510,7 +510,7 @@ impl MessageHandler<Stop> for FeService {
         }
         self.update();
 
-        rx.ctxfuture().then(|res, _, _| match res {
+        rx.actfuture().then(|res, _, _| match res {
             Ok(_) => fut::ok(()),
             Err(_) => fut::err(()),
         }).into()
