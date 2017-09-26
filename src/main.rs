@@ -20,7 +20,6 @@ extern crate libc;
 extern crate bytes;
 extern crate futures;
 extern crate tokio_core;
-extern crate tokio_signal;
 extern crate tokio_uds;
 extern crate tokio_io;
 
@@ -41,7 +40,6 @@ mod socket;
 mod worker;
 mod process;
 mod io;
-mod signals;
 mod utils;
 
 mod version {

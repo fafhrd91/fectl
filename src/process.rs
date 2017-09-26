@@ -38,7 +38,7 @@ pub struct Process {
     timeout: Duration,
     startup_timeout: u64,
     shutdown_timeout: u64,
-    sink: ctx::Sink<WorkerCommand, io::Error>,
+    sink: actix::Sink<WorkerCommand, io::Error>,
 }
 
 impl Actor for Process {}

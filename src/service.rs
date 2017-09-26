@@ -15,9 +15,9 @@ enum ServiceState {
     Running,
     Failed,
     Stopped,
-    Starting(ctx::Condition<StartStatus>),
-    Reloading(ctx::Condition<ReloadStatus>),
-    Stopping(ctx::Condition<()>),
+    Starting(actix::Condition<StartStatus>),
+    Reloading(actix::Condition<ReloadStatus>),
+    Stopping(actix::Condition<()>),
 }
 
 impl ServiceState {
@@ -90,7 +90,7 @@ impl FeService {
 
             FeService {
                 name: cfg.name.clone(),
-                state: ServiceState::Starting(ctx::Condition::default()),
+                state: ServiceState::Starting(actix::Condition::default()),
                 paused: false,
                 workers: workers}
         })
@@ -335,7 +335,7 @@ impl MessageHandler<Start> for FeService {
             }
             ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Starting service: {:?}", self.name);
-                let mut task = ctx::Condition::default();
+                let mut task = actix::Condition::default();
                 let rx = task.wait();
                 self.paused = false;
                 self.state = ServiceState::Starting(task);
@@ -419,7 +419,7 @@ impl MessageHandler<Reload> for FeService {
             }
             ServiceState::Running | ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Reloading service: {:?}", self.name);
-                let mut task = ctx::Condition::default();
+                let mut task = actix::Condition::default();
                 let rx = task.wait();
                 self.paused = false;
                 self.state = ServiceState::Reloading(task);
@@ -472,7 +472,7 @@ impl MessageHandler<Stop> for FeService {
         }
 
         // stop workers
-        let mut task = ctx::Condition::default();
+        let mut task = actix::Condition::default();
         let rx = task.wait();
         self.paused = false;
         self.state = ServiceState::Stopping(task);

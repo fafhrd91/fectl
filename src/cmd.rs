@@ -5,8 +5,8 @@ use nix::unistd::getpid;
 use nix::sys::wait::{waitpid, WaitStatus, WNOHANG};
 
 use actix::prelude::*;
+use actix::actors::signal;
 
-use signals::{ProcessEvent, ProcessEventType};
 use config::Config;
 use event::{Reason, ServiceStatus};
 use process::ProcessError;
@@ -38,7 +38,7 @@ pub struct CommandCenter {
     state: State,
     system: SyncAddress<System>,
     services: HashMap<String, Address<FeService>>,
-    stop_waiter: Option<ctx::Condition<bool>>,
+    stop_waiter: Option<actix::Condition<bool>>,
     stopping: usize,
 }
 
@@ -61,9 +61,9 @@ impl CommandCenter {
         }
 
         if success {
-            self.system.send(SystemExit(0));
+            self.system.send(actix::SystemExit(0));
         } else {
-            self.system.send(SystemExit(0));
+            self.system.send(actix::SystemExit(0));
         }
     }
 
@@ -131,7 +131,7 @@ impl MessageHandler<Stop> for CommandCenter {
         self.stop(ctx, true);
 
         if self.stop_waiter.is_none() {
-            self.stop_waiter = Some(ctx::Condition::default());
+            self.stop_waiter = Some(actix::Condition::default());
         }
 
         if let Some(ref mut waiter) = self.stop_waiter {
@@ -365,32 +365,32 @@ impl MessageHandler<ReloadAll> for CommandCenter {
 }
 
 /// Handle ProcessEvent (SIGHUP, SIGINT, etc)
-impl MessageHandler<ProcessEvent> for CommandCenter {
+impl MessageHandler<signal::Signal> for CommandCenter {
     type Item = ();
     type Error = ();
     type InputError = ();
 
-    fn handle(&mut self, msg: ProcessEvent, ctx: &mut Context<Self>)
-              -> MessageFuture<Self, ProcessEvent>
+    fn handle(&mut self, msg: signal::Signal, ctx: &mut Context<Self>)
+              -> MessageFuture<Self, signal::Signal>
     {
         match msg.0 {
-            ProcessEventType::Int => {
+            signal::SignalType::Int => {
                 info!("SIGINT received, exiting");
                 self.stop(ctx, false);
             }
-            ProcessEventType::Hup => {
+            signal::SignalType::Hup => {
                 info!("SIGHUP received, reloading");
                 // self.handle(ReloadAll, ctx);
             }
-            ProcessEventType::Term => {
+            signal::SignalType::Term => {
                 info!("SIGTERM received, stopping");
                 self.stop(ctx, true);
             }
-            ProcessEventType::Quit => {
+            signal::SignalType::Quit => {
                 info!("SIGQUIT received, exiting");
                 self.stop(ctx, false);
             }
-            ProcessEventType::Child => {
+            signal::SignalType::Child => {
                 info!("SIGCHLD received");
                 debug!("Reap workers");
                 loop {

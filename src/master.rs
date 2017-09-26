@@ -16,10 +16,10 @@ use tokio_uds::{UnixStream, UnixListener};
 use tokio_io::codec::{Encoder, Decoder};
 
 use actix::prelude::*;
+use actix::actors::signal;
 
 use client;
 use logging;
-use signals;
 use config::Config;
 use version::PKG_INFO;
 use cmd::{self, CommandCenter, CommandError};
@@ -40,12 +40,13 @@ impl MessageHandler<(UnixStream, std::os::unix::net::SocketAddr)> for Master {
     type Error = ();
     type InputError = io::Error;
 
-    fn handle(&mut self, msg: (UnixStream, std::os::unix::net::SocketAddr), _: &mut Context<Self>)
+    fn handle(&mut self,
+              msg: (UnixStream, std::os::unix::net::SocketAddr), _: &mut Context<Self>)
               -> MessageFuture<Self, (UnixStream, std::os::unix::net::SocketAddr)>
     {
         let cmd = self.cmd.clone();
         let (r, w) = msg.0.actix_framed(MasterTransportCodec, MasterTransportCodec);
-        MasterClient::create(
+        let _: () = MasterClient::create(
             move |ctx| {
                 ctx.add_stream(r);
                 MasterClient{cmd: cmd,
@@ -64,7 +65,7 @@ impl Drop for Master {
 
 struct MasterClient {
     cmd: Address<CommandCenter>,
-    sink: ctx::Sink<MasterResponse, io::Error>,
+    sink: actix::Sink<MasterResponse, io::Error>,
 }
 
 impl Actor for MasterClient {
@@ -465,14 +466,14 @@ pub fn start(cfg: Config) -> bool {
     };
 
     // signals
-    let events = signals::ProcessEvents::start();
+    let events: Address<_> = signal::ProcessSignals::run();
 
     // command center
     let cmd = CommandCenter::start(cfg.clone());
-    events.send(signals::Subscribe(cmd.subscriber()));
+    events.send(signal::Subscribe(cmd.subscriber()));
 
     // start uds master server
-    Master{cfg: cfg, cmd: cmd}.start_with(lst.incoming());
+    let _: () = Master{cfg: cfg, cmd: cmd}.start_with(lst.incoming());
 
     if !daemon {
         println!("");
