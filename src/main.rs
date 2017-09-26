@@ -24,7 +24,7 @@ extern crate tokio_signal;
 extern crate tokio_uds;
 extern crate tokio_io;
 
-extern crate ctx;
+extern crate actix;
 
 mod addrinfo;
 mod client;

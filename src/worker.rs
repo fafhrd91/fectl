@@ -2,7 +2,7 @@ use std;
 use std::time::{Duration, Instant};
 
 use nix::unistd::Pid;
-use ctx::prelude::*;
+use actix::prelude::*;
 
 use utils::str;
 use event::{Events, State, Reason};

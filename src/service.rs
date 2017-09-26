@@ -3,7 +3,7 @@
 use std;
 use nix::unistd::Pid;
 
-use ctx::prelude::*;
+use actix::prelude::*;
 
 use event::{Event, Reason};
 use config::ServiceConfig;
@@ -81,7 +81,7 @@ impl FeService {
 
     pub fn start(num: u16, cfg: ServiceConfig) -> Address<FeService>
     {
-        FeService::init(move |ctx| {
+        FeService::create(move |ctx| {
             // create4 workers
             let mut workers = Vec::new();
             for idx in 0..num as usize {
@@ -90,7 +90,7 @@ impl FeService {
 
             FeService {
                 name: cfg.name.clone(),
-                state: ServiceState::Starting(ctx::Condition::new()),
+                state: ServiceState::Starting(ctx::Condition::default()),
                 paused: false,
                 workers: workers}
         })
@@ -198,7 +198,7 @@ impl FeService {
 
 impl Actor for FeService {
 
-    fn start(&mut self, _: &mut Context<Self>) {
+    fn started(&mut self, _: &mut Context<Self>) {
         // start workers
         for worker in self.workers.iter_mut() {
             worker.start(Reason::Initial);
@@ -335,7 +335,7 @@ impl MessageHandler<Start> for FeService {
             }
             ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Starting service: {:?}", self.name);
-                let mut task = ctx::Condition::new();
+                let mut task = ctx::Condition::default();
                 let rx = task.wait();
                 self.paused = false;
                 self.state = ServiceState::Starting(task);
@@ -419,7 +419,7 @@ impl MessageHandler<Reload> for FeService {
             }
             ServiceState::Running | ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Reloading service: {:?}", self.name);
-                let mut task = ctx::Condition::new();
+                let mut task = ctx::Condition::default();
                 let rx = task.wait();
                 self.paused = false;
                 self.state = ServiceState::Reloading(task);
@@ -472,7 +472,7 @@ impl MessageHandler<Stop> for FeService {
         }
 
         // stop workers
-        let mut task = ctx::Condition::new();
+        let mut task = ctx::Condition::default();
         let rx = task.wait();
         self.paused = false;
         self.state = ServiceState::Stopping(task);

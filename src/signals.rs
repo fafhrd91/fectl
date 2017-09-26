@@ -5,7 +5,7 @@ use futures::{Future, Stream};
 use tokio_signal;
 use tokio_signal::unix::Signal;
 
-use ctx::prelude::*;
+use actix::prelude::*;
 
 /// Different types of process events
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -31,7 +31,7 @@ impl ProcessEvents {
 
 impl Actor for ProcessEvents {
 
-    fn start(&mut self, ctx: &mut Context<Self>) {
+    fn started(&mut self, ctx: &mut Context<Self>) {
         let handle = Arbiter::handle();
 
         // SIGINT

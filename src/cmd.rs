@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use nix::unistd::getpid;
 use nix::sys::wait::{waitpid, WaitStatus, WNOHANG};
 
-use ctx::prelude::*;
+use actix::prelude::*;
 
 use signals::{ProcessEvent, ProcessEventType};
 use config::Config;
@@ -131,7 +131,7 @@ impl MessageHandler<Stop> for CommandCenter {
         self.stop(ctx, true);
 
         if self.stop_waiter.is_none() {
-            self.stop_waiter = Some(ctx::Condition::new());
+            self.stop_waiter = Some(ctx::Condition::default());
         }
 
         if let Some(ref mut waiter) = self.stop_waiter {
@@ -429,7 +429,7 @@ impl MessageHandler<ProcessEvent> for CommandCenter {
 
 impl Actor for CommandCenter {
 
-    fn start(&mut self, _: &mut Context<Self>)
+    fn started(&mut self, _: &mut Context<Self>)
     {
         info!("Starting ctl service: {}", getpid());
 

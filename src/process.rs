@@ -15,7 +15,7 @@ use tokio_io::codec::{Encoder, Decoder};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::{close, pipe, fork, ForkResult, Pid};
 
-use ctx::prelude::*;
+use actix::prelude::*;
 
 use config::ServiceConfig;
 use io::PipeFile;
@@ -137,8 +137,8 @@ impl Process {
         let shutdown_timeout = cfg.shutdown_timeout as u64;
 
         // start Process service
-        let (r, w) = pipe.ctx_framed(TransportCodec, TransportCodec);
-        let addr = Process::init(
+        let (r, w) = pipe.actix_framed(TransportCodec, TransportCodec);
+        let addr = Process::create(
             move |ctx| {
                 ctx.add_stream(r);
                 ctx.add_future(

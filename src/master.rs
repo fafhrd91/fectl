@@ -15,7 +15,7 @@ use tokio_core::reactor::Timeout;
 use tokio_uds::{UnixStream, UnixListener};
 use tokio_io::codec::{Encoder, Decoder};
 
-use ctx::prelude::*;
+use actix::prelude::*;
 
 use client;
 use logging;
@@ -44,8 +44,8 @@ impl MessageHandler<(UnixStream, std::os::unix::net::SocketAddr)> for Master {
               -> MessageFuture<Self, (UnixStream, std::os::unix::net::SocketAddr)>
     {
         let cmd = self.cmd.clone();
-        let (r, w) = msg.0.ctx_framed(MasterTransportCodec, MasterTransportCodec);
-        MasterClient::init(
+        let (r, w) = msg.0.actix_framed(MasterTransportCodec, MasterTransportCodec);
+        MasterClient::create(
             move |ctx| {
                 ctx.add_stream(r);
                 MasterClient{cmd: cmd,
@@ -69,7 +69,7 @@ struct MasterClient {
 
 impl Actor for MasterClient {
 
-    fn start(&mut self, ctx: &mut Context<Self>) {
+    fn started(&mut self, ctx: &mut Context<Self>) {
         self.hb(ctx);
     }
 }
@@ -178,7 +178,7 @@ impl MasterClient {
 
 impl StreamHandler<MasterRequest> for MasterClient {
 
-    fn start(&mut self, ctx: &mut Context<Self>) {
+    fn started(&mut self, ctx: &mut Context<Self>) {
         self.hb(ctx);
     }
 
