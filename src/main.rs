@@ -47,9 +47,15 @@ mod version {
 }
 
 fn main() {
-    let success = match config::load_config() {
+    let sys = actix::System::new("fectl".to_owned());
+    let loaded = match config::load_config() {
         Some(cfg) => master::start(cfg),
         None => false,
     };
-    std::process::exit(if success {0} else {1});
+    let code = if loaded {
+        sys.run()
+    } else {
+        1
+    };
+    std::process::exit(code);
 }

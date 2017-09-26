@@ -453,7 +453,6 @@ pub fn start(cfg: Config) -> bool {
         nix::sys::stat::umask(nix::sys::stat::Mode::from_bits(0o22).unwrap());
     }
 
-    let sys = System::init();
     let cfg = Rc::new(cfg);
 
     // create uds stream
@@ -478,6 +477,5 @@ pub fn start(cfg: Config) -> bool {
     if !daemon {
         println!("");
     }
-    sys.run();
     true
 }

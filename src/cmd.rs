@@ -48,7 +48,7 @@ impl CommandCenter {
         CommandCenter {
             cfg: cfg,
             state: State::Starting,
-            system: System::get(),
+            system: Arbiter::get_system(),
             services: HashMap::new(),
             stop_waiter: None,
             stopping: 0,
