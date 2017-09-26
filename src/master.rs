@@ -465,11 +465,10 @@ pub fn start(cfg: Config) -> bool {
     };
 
     // signals
-    let events: Address<_> = signal::ProcessSignals::run();
+    let _: () = signal::ProcessSignals::run();
 
     // command center
     let cmd = CommandCenter::start(cfg.clone());
-    events.send(signal::Subscribe(cmd.subscriber()));
 
     // start uds master server
     let _: () = Master{cfg: cfg, cmd: cmd}.start_with(lst.incoming());

@@ -48,7 +48,7 @@ impl CommandCenter {
         CommandCenter {
             cfg: cfg,
             state: State::Starting,
-            system: Arbiter::get_system(),
+            system: Arbiter::system(),
             services: HashMap::new(),
             stop_waiter: None,
             stopping: 0,
@@ -429,9 +429,14 @@ impl MessageHandler<signal::Signal> for CommandCenter {
 
 impl Actor for CommandCenter {
 
-    fn started(&mut self, _: &mut Context<Self>)
+    fn started(&mut self, ctx: &mut Context<Self>)
     {
         info!("Starting ctl service: {}", getpid());
+
+        // listen for process signals
+        Arbiter::system_registry().query::<signal::ProcessSignals>()
+            .unwrap()
+            .send(signal::Subscribe(ctx.sync_subscriber()));
 
         // start services
         for cfg in self.cfg.services.iter() {
