@@ -225,7 +225,7 @@ impl Drop for Process {
     }
 }
 
-impl StreamHandler<ProcessMessage> for Process {
+impl StreamHandler<ProcessMessage, io::Error> for Process {
 
     fn finished(&mut self, ctx: &mut Context<Self>)
     {
@@ -233,10 +233,12 @@ impl StreamHandler<ProcessMessage> for Process {
     }
 }
 
-impl MessageHandler<ProcessMessage> for Process {
+impl MessageResponse<ProcessMessage> for Process {
     type Item = ();
     type Error = ();
-    type InputError = io::Error;
+}
+
+impl MessageHandler<ProcessMessage, io::Error> for Process {
 
     fn error(&mut self, _: io::Error, ctx: &mut Context<Self>) {
         self.kill(ctx)
@@ -362,10 +364,12 @@ impl MessageHandler<ProcessMessage> for Process {
 
 pub struct SendCommand(pub WorkerCommand);
 
-impl MessageHandler<SendCommand> for Process {
+impl MessageResponse<SendCommand> for Process {
     type Item = ();
     type Error = ();
-    type InputError = ();
+}
+
+impl MessageHandler<SendCommand> for Process {
 
     fn handle(&mut self, msg: SendCommand, _: &mut Context<Process>)
               -> MessageFuture<Self, SendCommand>
@@ -377,10 +381,12 @@ impl MessageHandler<SendCommand> for Process {
 
 pub struct StartProcess;
 
-impl MessageHandler<StartProcess> for Process {
+impl MessageResponse<StartProcess> for Process {
     type Item = ();
     type Error = ();
-    type InputError = ();
+}
+
+impl MessageHandler<StartProcess> for Process {
 
     fn handle(&mut self, _: StartProcess, _: &mut Context<Process>)
               -> MessageFuture<Self, StartProcess>
@@ -392,10 +398,12 @@ impl MessageHandler<StartProcess> for Process {
 
 pub struct PauseProcess;
 
-impl MessageHandler<PauseProcess> for Process {
+impl MessageResponse<PauseProcess> for Process {
     type Item = ();
     type Error = ();
-    type InputError = ();
+}
+
+impl MessageHandler<PauseProcess> for Process {
 
     fn handle(&mut self, _: PauseProcess, _: &mut Context<Process>)
               -> MessageFuture<Self, PauseProcess>
@@ -407,10 +415,12 @@ impl MessageHandler<PauseProcess> for Process {
 
 pub struct ResumeProcess;
 
-impl MessageHandler<ResumeProcess> for Process {
+impl MessageResponse<ResumeProcess> for Process {
     type Item = ();
     type Error = ();
-    type InputError = ();
+}
+
+impl MessageHandler<ResumeProcess> for Process {
 
     fn handle(&mut self, _: ResumeProcess, _: &mut Context<Process>)
               -> MessageFuture<Self, ResumeProcess>
@@ -422,10 +432,12 @@ impl MessageHandler<ResumeProcess> for Process {
 
 pub struct StopProcess;
 
-impl MessageHandler<StopProcess> for Process {
+impl MessageResponse<StopProcess> for Process {
     type Item = ();
     type Error = ();
-    type InputError = ();
+}
+
+impl MessageHandler<StopProcess> for Process {
 
     fn handle(&mut self, _: StopProcess, ctx: &mut Context<Process>)
               -> MessageFuture<Self, StopProcess>
@@ -458,10 +470,12 @@ impl MessageHandler<StopProcess> for Process {
 
 pub struct QuitProcess;
 
-impl MessageHandler<QuitProcess> for Process {
+impl MessageResponse<QuitProcess> for Process {
     type Item = ();
     type Error = ();
-    type InputError = ();
+}
+
+impl MessageHandler<QuitProcess> for Process {
 
     fn handle(&mut self, _: QuitProcess, ctx: &mut Context<Process>)
               -> MessageFuture<Self, QuitProcess>

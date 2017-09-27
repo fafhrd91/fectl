@@ -33,12 +33,14 @@ pub struct Master {
 
 impl Actor for Master {}
 
-impl StreamHandler<(UnixStream, std::os::unix::net::SocketAddr)> for Master {}
+impl StreamHandler<(UnixStream, std::os::unix::net::SocketAddr), io::Error> for Master {}
 
-impl MessageHandler<(UnixStream, std::os::unix::net::SocketAddr)> for Master {
+impl MessageResponse<(UnixStream, std::os::unix::net::SocketAddr)> for Master {
     type Item = ();
     type Error = ();
-    type InputError = io::Error;
+}
+
+impl MessageHandler<(UnixStream, std::os::unix::net::SocketAddr), io::Error> for Master {
 
     fn handle(&mut self,
               msg: (UnixStream, std::os::unix::net::SocketAddr), _: &mut Context<Self>)
@@ -177,7 +179,7 @@ impl MasterClient {
     }
 }
 
-impl StreamHandler<MasterRequest> for MasterClient {
+impl StreamHandler<MasterRequest, io::Error> for MasterClient {
 
     fn started(&mut self, ctx: &mut Context<Self>) {
         self.hb(ctx);
@@ -188,10 +190,12 @@ impl StreamHandler<MasterRequest> for MasterClient {
     }
 }
 
-impl MessageHandler<MasterRequest> for MasterClient {
+impl MessageResponse<MasterRequest> for MasterClient {
     type Item = ();
     type Error = ();
-    type InputError = io::Error;
+}
+
+impl MessageHandler<MasterRequest, io::Error> for MasterClient {
 
     fn error(&mut self, _: io::Error, ctx: &mut Context<Self>) {
         ctx.stop()
