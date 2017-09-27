@@ -184,7 +184,7 @@ impl StreamHandler<MasterRequest> for MasterClient {
     }
 
     fn finished(&mut self, ctx: &mut Context<Self>) {
-        ctx.set_done()
+        ctx.stop()
     }
 }
 
@@ -194,7 +194,7 @@ impl MessageHandler<MasterRequest> for MasterClient {
     type InputError = io::Error;
 
     fn error(&mut self, _: io::Error, ctx: &mut Context<Self>) {
-        ctx.set_done()
+        ctx.stop()
     }
 
     fn handle(&mut self, msg: MasterRequest, ctx: &mut Context<Self>)

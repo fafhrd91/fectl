@@ -55,8 +55,8 @@ serde_json = "*"
 serde_derive = "*"
 
 [dependencies.actix]
-path = "../ctx"
-#git = "https://github.com/fafhrd91/actix.git"
+#path = "../ctx"
+git = "https://github.com/fafhrd91/actix.git"
 features = ["signal"]
 
 [profile.release]

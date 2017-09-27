@@ -307,7 +307,7 @@ impl MessageHandler<ProcessMessage> for Process {
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
-                        ctx.set_done();
+                        ctx.stop();
                         return ().to_result()
                     },
                     _ => ()
@@ -323,7 +323,7 @@ impl MessageHandler<ProcessMessage> for Process {
 
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
-                        ctx.set_done();
+                        ctx.stop();
                         return ().to_result()
                     },
                     _ => ()
@@ -352,7 +352,7 @@ impl MessageHandler<ProcessMessage> for Process {
             }
             ProcessMessage::Kill => {
                 let _ = kill(self.pid, Signal::SIGKILL);
-                ctx.set_done();
+                ctx.stop();
                 return ().to_result()
             }
         }
@@ -444,12 +444,12 @@ impl MessageHandler<StopProcess> for Process {
                 } else {
                     // can not create timeout
                     let _ = kill(self.pid, Signal::SIGQUIT);
-                    ctx.set_done();
+                    ctx.stop();
                 }
             },
             _ => {
                 let _ = kill(self.pid, Signal::SIGQUIT);
-                ctx.set_done();
+                ctx.stop();
             }
         }
         ().to_result()
