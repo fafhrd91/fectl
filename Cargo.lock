@@ -31,7 +31,7 @@ dependencies = [
 [[package]]
 name = "actix"
 version = "0.1.0"
-source = "git+https://github.com/fafhrd91/actix.git#3c216f558a940d9b4dd19b1ea0e19c2196f0a651"
+source = "git+https://github.com/fafhrd91/actix.git#4c668c2ca3115c2bfc72dd13c9be2608be3aad2e"
 dependencies = [
  "bitflags 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
