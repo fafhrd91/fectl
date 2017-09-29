@@ -454,8 +454,7 @@ impl Actor for CommandCenter {
         info!("Starting ctl service: {}", getpid());
 
         // listen for process signals
-        Arbiter::system_registry().query::<signal::ProcessSignals>()
-            .unwrap()
+        Arbiter::system_registry().get::<signal::ProcessSignals>()
             .send(signal::Subscribe(ctx.sync_subscriber()));
 
         // start services
