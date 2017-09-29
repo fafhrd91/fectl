@@ -466,7 +466,7 @@ impl Actor for CommandCenter {
         self.state = State::Running;
     }
 
-    fn finished(&mut self, _: &mut Context<Self>)
+    fn stopping(&mut self, _: &mut Context<Self>)
     {
         self.exit(true);
     }
