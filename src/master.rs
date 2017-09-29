@@ -44,7 +44,7 @@ impl MessageHandler<(UnixStream, std::os::unix::net::SocketAddr), io::Error> for
 
     fn handle(&mut self,
               msg: (UnixStream, std::os::unix::net::SocketAddr), _: &mut Context<Self>)
-              -> MessageFuture<Self, (UnixStream, std::os::unix::net::SocketAddr)>
+              -> Response<Self, (UnixStream, std::os::unix::net::SocketAddr)>
     {
         let cmd = self.cmd.clone();
         let (r, w) = msg.0.actix_framed(MasterTransportCodec, MasterTransportCodec);
@@ -55,7 +55,7 @@ impl MessageHandler<(UnixStream, std::os::unix::net::SocketAddr), io::Error> for
                              sink: ctx.add_sink(w)}
             }
         );
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -202,7 +202,7 @@ impl MessageHandler<MasterRequest, io::Error> for MasterClient {
     }
 
     fn handle(&mut self, msg: MasterRequest, ctx: &mut Context<Self>)
-              -> MessageFuture<Self, MasterRequest>
+              -> Response<Self, MasterRequest>
     {
         match msg {
             MasterRequest::Ping =>
@@ -281,7 +281,7 @@ impl MessageHandler<MasterRequest, io::Error> for MasterClient {
                     }).spawn(ctx);
             }
         };
-        ().to_result()
+        ().to_response()
     }
 }
 

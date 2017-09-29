@@ -245,7 +245,7 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
     }
 
     fn handle(&mut self, msg: ProcessMessage, ctx: &mut Context<Self>)
-              -> MessageFuture<Self, ProcessMessage>
+              -> Response<Self, ProcessMessage>
     {
         match msg {
             ProcessMessage::Message(msg) => match msg {
@@ -310,7 +310,7 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
                         ctx.stop();
-                        return ().to_result()
+                        return ().to_response()
                     },
                     _ => ()
                 }
@@ -326,7 +326,7 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
                         ctx.stop();
-                        return ().to_result()
+                        return ().to_response()
                     },
                     _ => ()
                 }
@@ -355,10 +355,10 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
             ProcessMessage::Kill => {
                 let _ = kill(self.pid, Signal::SIGKILL);
                 ctx.stop();
-                return ().to_result()
+                return ().to_response()
             }
         }
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -372,10 +372,10 @@ impl MessageResponse<SendCommand> for Process {
 impl MessageHandler<SendCommand> for Process {
 
     fn handle(&mut self, msg: SendCommand, _: &mut Context<Process>)
-              -> MessageFuture<Self, SendCommand>
+              -> Response<Self, SendCommand>
     {
         self.sink.send(msg.0);
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -389,10 +389,10 @@ impl MessageResponse<StartProcess> for Process {
 impl MessageHandler<StartProcess> for Process {
 
     fn handle(&mut self, _: StartProcess, _: &mut Context<Process>)
-              -> MessageFuture<Self, StartProcess>
+              -> Response<Self, StartProcess>
     {
         self.sink.send(WorkerCommand::start);
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -406,10 +406,10 @@ impl MessageResponse<PauseProcess> for Process {
 impl MessageHandler<PauseProcess> for Process {
 
     fn handle(&mut self, _: PauseProcess, _: &mut Context<Process>)
-              -> MessageFuture<Self, PauseProcess>
+              -> Response<Self, PauseProcess>
     {
         self.sink.send(WorkerCommand::pause);
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -423,10 +423,10 @@ impl MessageResponse<ResumeProcess> for Process {
 impl MessageHandler<ResumeProcess> for Process {
 
     fn handle(&mut self, _: ResumeProcess, _: &mut Context<Process>)
-              -> MessageFuture<Self, ResumeProcess>
+              -> Response<Self, ResumeProcess>
     {
         self.sink.send(WorkerCommand::resume);
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -440,7 +440,7 @@ impl MessageResponse<StopProcess> for Process {
 impl MessageHandler<StopProcess> for Process {
 
     fn handle(&mut self, _: StopProcess, ctx: &mut Context<Process>)
-              -> MessageFuture<Self, StopProcess>
+              -> Response<Self, StopProcess>
     {
         info!("Stopping worker: (pid:{})", self.pid);
         match self.state {
@@ -464,7 +464,7 @@ impl MessageHandler<StopProcess> for Process {
                 ctx.stop();
             }
         }
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -478,11 +478,11 @@ impl MessageResponse<QuitProcess> for Process {
 impl MessageHandler<QuitProcess> for Process {
 
     fn handle(&mut self, _: QuitProcess, ctx: &mut Context<Process>)
-              -> MessageFuture<Self, QuitProcess>
+              -> Response<Self, QuitProcess>
     {
         let _ = kill(self.pid, Signal::SIGQUIT);
         self.kill(ctx);
-        ().to_result()
+        ().to_response()
     }
 }
 

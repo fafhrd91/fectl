@@ -216,11 +216,11 @@ impl MessageResponse<ProcessMessage> for FeService {
 impl MessageHandler<ProcessMessage> for FeService {
 
     fn handle(&mut self, msg: ProcessMessage, _: &mut Context<Self>)
-              -> MessageFuture<Self, ProcessMessage>
+              -> Response<Self, ProcessMessage>
     {
         self.workers[msg.0].message(msg.1, &msg.2);
         self.update();
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -234,11 +234,11 @@ impl MessageResponse<ProcessFailed> for FeService {
 impl MessageHandler<ProcessFailed> for FeService {
 
     fn handle(&mut self, msg: ProcessFailed, _: &mut Context<Self>)
-              -> MessageFuture<Self, ProcessFailed>
+              -> Response<Self, ProcessFailed>
     {
         self.workers[msg.0].exited(msg.1, &msg.2);
         self.update();
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -252,11 +252,11 @@ impl MessageResponse<ProcessLoaded> for FeService {
 impl MessageHandler<ProcessLoaded> for FeService {
 
     fn handle(&mut self, msg: ProcessLoaded, _: &mut Context<Self>)
-              -> MessageFuture<Self, ProcessLoaded>
+              -> Response<Self, ProcessLoaded>
     {
         self.workers[msg.0].loaded(msg.1);
         self.update();
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -270,13 +270,13 @@ impl MessageResponse<ProcessExited> for FeService {
 impl MessageHandler<ProcessExited> for FeService {
 
     fn handle(&mut self, msg: ProcessExited, _: &mut Context<Self>)
-              -> MessageFuture<Self, ProcessExited>
+              -> Response<Self, ProcessExited>
     {
         for worker in self.workers.iter_mut() {
             worker.exited(msg.0, &msg.1);
         }
         self.update();
-        ().to_result()
+        ().to_response()
     }
 }
 
@@ -290,7 +290,7 @@ impl MessageResponse<Pids> for FeService {
 
 impl MessageHandler<Pids> for FeService {
 
-    fn handle(&mut self, _: Pids, _: &mut Context<Self>) -> MessageFuture<Self, Pids>
+    fn handle(&mut self, _: Pids, _: &mut Context<Self>) -> Response<Self, Pids>
     {
         let mut pids = Vec::new();
         for worker in self.workers.iter() {
@@ -298,7 +298,7 @@ impl MessageHandler<Pids> for FeService {
                 pids.push(format!("{}", pid));
             }
         }
-        pids.to_result()
+        pids.to_response()
     }
 }
 
@@ -312,7 +312,7 @@ impl MessageResponse<Status> for FeService {
 
 impl MessageHandler<Status> for FeService {
 
-    fn handle(&mut self, _: Status, _: &mut Context<Self>) -> MessageFuture<Self, Status>
+    fn handle(&mut self, _: Status, _: &mut Context<Self>) -> Response<Self, Status>
     {
         let mut events: Vec<(String, Vec<Event>)> = Vec::new();
         for worker in self.workers.iter() {
@@ -324,7 +324,7 @@ impl MessageHandler<Status> for FeService {
             ServiceState::Running => if self.paused { "paused" } else { "running" }
             _ => self.state.description()
         };
-        (status.to_owned(), events).to_result()
+        (status.to_owned(), events).to_response()
     }
 }
 
@@ -338,7 +338,7 @@ impl MessageResponse<Start> for FeService {
 
 impl MessageHandler<Start> for FeService {
 
-    fn handle(&mut self, _: Start, _: &mut Context<Self>) -> MessageFuture<Self, Start>
+    fn handle(&mut self, _: Start, _: &mut Context<Self>) -> Response<Self, Start>
     {
         match self.state {
             ServiceState::Starting(ref mut task) => {
@@ -376,7 +376,7 @@ impl MessageResponse<Pause> for FeService {
 
 impl MessageHandler<Pause> for FeService {
 
-    fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> MessageFuture<Self, Pause>
+    fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> Response<Self, Pause>
     {
         match self.state {
             ServiceState::Running => {
@@ -385,7 +385,7 @@ impl MessageHandler<Pause> for FeService {
                     worker.pause(Reason::ConsoleRequest);
                 }
                 self.paused = true;
-                ().to_result()
+                ().to_response()
             }
             _ => self.state.error().to_error()
         }
@@ -402,7 +402,7 @@ impl MessageResponse<Resume> for FeService {
 
 impl MessageHandler<Resume> for FeService {
 
-    fn handle(&mut self, _: Resume, _: &mut Context<Self>) -> MessageFuture<Self, Resume>
+    fn handle(&mut self, _: Resume, _: &mut Context<Self>) -> Response<Self, Resume>
     {
         match self.state {
             ServiceState::Running => {
@@ -411,7 +411,7 @@ impl MessageHandler<Resume> for FeService {
                     worker.resume(Reason::ConsoleRequest);
                 }
                 self.paused = false;
-                ().to_result()
+                ().to_response()
             }
             _ => self.state.error().to_error()
         }
@@ -428,7 +428,7 @@ impl MessageResponse<Reload> for FeService {
 
 impl MessageHandler<Reload> for FeService {
 
-    fn handle(&mut self, msg: Reload, _: &mut Context<Self>) -> MessageFuture<Self, Reload>
+    fn handle(&mut self, msg: Reload, _: &mut Context<Self>) -> Response<Self, Reload>
     {
         match self.state {
             ServiceState::Reloading(ref mut task) => {
@@ -466,7 +466,7 @@ impl MessageResponse<Stop> for FeService {
 
 impl MessageHandler<Stop> for FeService {
 
-    fn handle(&mut self, msg: Stop, _: &mut Context<Self>) -> MessageFuture<Self, Stop>
+    fn handle(&mut self, msg: Stop, _: &mut Context<Self>) -> Response<Self, Stop>
     {
         let state = std::mem::replace(&mut self.state, ServiceState::Stopped);
 
