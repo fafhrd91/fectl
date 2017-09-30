@@ -84,7 +84,7 @@ impl MasterClient {
             .unwrap()
             .actfuture()
             .then(|_, srv: &mut MasterClient, ctx: &mut Context<Self>| {
-                srv.sink.send(MasterResponse::Pong);
+                let _ = srv.sink.send(MasterResponse::Pong);
                 srv.hb(ctx);
                 fut::ok(())
             });
@@ -92,7 +92,7 @@ impl MasterClient {
     }
 
     fn handle_error(&mut self, err: CommandError) {
-        match err {
+        let _ = match err {
             CommandError::NotReady =>
                 self.sink.send(MasterResponse::ErrorNotReady),
             CommandError::UnknownService =>
@@ -113,7 +113,7 @@ impl MasterClient {
                 ServiceOperationError::Failed =>
                     self.sink.send(MasterResponse::ErrorServiceFailed),
             }
-        }
+        };
     }
 
     fn stop(&mut self, name: String, ctx: &mut Context<Self>) {
@@ -124,12 +124,14 @@ impl MasterClient {
                 match res {
                     Err(_) => (),
                     Ok(Err(err)) => match err {
-                        CommandError::ServiceStopped =>
-                            srv.sink.send(MasterResponse::ServiceStarted),
+                        CommandError::ServiceStopped => {
+                            let _ = srv.sink.send(MasterResponse::ServiceStarted);
+                        },
                         _ => srv.handle_error(err),
                     }
-                    Ok(Ok(_)) =>
-                        srv.sink.send(MasterResponse::ServiceStopped),
+                    Ok(Ok(_)) => {
+                        let _ = srv.sink.send(MasterResponse::ServiceStopped);
+                    }
                 };
                 fut::ok(())
             }).spawn(ctx);
@@ -144,13 +146,15 @@ impl MasterClient {
                 match res {
                     Err(_) => (),
                     Ok(Err(err)) => srv.handle_error(err),
-                    Ok(Ok(res)) => match res {
-                        ReloadStatus::Success =>
-                            srv.sink.send(MasterResponse::ServiceStarted),
-                        ReloadStatus::Failed =>
-                            srv.sink.send(MasterResponse::ServiceFailed),
-                        ReloadStatus::Stopping =>
-                            srv.sink.send(MasterResponse::ErrorServiceStopping),
+                    Ok(Ok(res)) => {
+                        let _ = match res {
+                            ReloadStatus::Success =>
+                                srv.sink.send(MasterResponse::ServiceStarted),
+                            ReloadStatus::Failed =>
+                                srv.sink.send(MasterResponse::ServiceFailed),
+                            ReloadStatus::Stopping =>
+                                srv.sink.send(MasterResponse::ErrorServiceStopping),
+                        };
                     }
                 }
                 fut::ok(())
@@ -165,13 +169,15 @@ impl MasterClient {
                 match res {
                     Err(_) => (),
                     Ok(Err(err)) => srv.handle_error(err),
-                    Ok(Ok(res)) => match res {
-                        StartStatus::Success =>
-                            srv.sink.send(MasterResponse::ServiceStarted),
-                        StartStatus::Failed =>
-                            srv.sink.send(MasterResponse::ServiceFailed),
-                        StartStatus::Stopping =>
-                            srv.sink.send(MasterResponse::ErrorServiceStopping),
+                    Ok(Ok(res)) => {
+                        let _ = match res {
+                            StartStatus::Success =>
+                                srv.sink.send(MasterResponse::ServiceStarted),
+                            StartStatus::Failed =>
+                                srv.sink.send(MasterResponse::ServiceFailed),
+                            StartStatus::Stopping =>
+                                srv.sink.send(MasterResponse::ErrorServiceStopping),
+                        };
                     }
                 }
                 fut::ok(())
@@ -205,8 +211,9 @@ impl MessageHandler<MasterRequest, io::Error> for MasterClient {
               -> Response<Self, MasterRequest>
     {
         match msg {
-            MasterRequest::Ping =>
-                self.sink.send(MasterResponse::Pong),
+            MasterRequest::Ping => {
+                let _ = self.sink.send(MasterResponse::Pong);
+            },
             MasterRequest::Start(name) =>
                 self.start_service(name, ctx),
             MasterRequest::Reload(name) =>
@@ -222,7 +229,9 @@ impl MessageHandler<MasterRequest, io::Error> for MasterClient {
                         match res {
                             Err(_) => (),
                             Ok(Err(err)) => srv.handle_error(err),
-                            Ok(Ok(_)) => srv.sink.send(MasterResponse::Done),
+                            Ok(Ok(_)) => {
+                                let _ = srv.sink.send(MasterResponse::Done);
+                            },
                         };
                         fut::ok(())
                     }).spawn(ctx);
@@ -234,7 +243,9 @@ impl MessageHandler<MasterRequest, io::Error> for MasterClient {
                         match res {
                             Err(_) => (),
                             Ok(Err(err)) => srv.handle_error(err),
-                            Ok(Ok(_)) => srv.sink.send(MasterResponse::Done),
+                            Ok(Ok(_)) => {
+                                let _ = srv.sink.send(MasterResponse::Done);
+                            },
                         };
                         fut::ok(())
                     }).spawn(ctx);
@@ -246,8 +257,10 @@ impl MessageHandler<MasterRequest, io::Error> for MasterClient {
                         match res {
                             Err(_) => (),
                             Ok(Err(err)) => srv.handle_error(err),
-                            Ok(Ok(status)) => srv.sink.send(
-                                MasterResponse::ServiceStatus(status)),
+                            Ok(Ok(status)) => {
+                                let _ = srv.sink.send(
+                                    MasterResponse::ServiceStatus(status));
+                            },
                         };
                         fut::ok(())
                     }).spawn(ctx);
@@ -259,24 +272,26 @@ impl MessageHandler<MasterRequest, io::Error> for MasterClient {
                         match res {
                             Err(_) => (),
                             Ok(Err(err)) => srv.handle_error(err),
-                            Ok(Ok(pids)) => srv.sink.send(
-                                MasterResponse::ServiceWorkerPids(pids)),
+                            Ok(Ok(pids)) => {
+                                let _ = srv.sink.send(
+                                    MasterResponse::ServiceWorkerPids(pids));
+                            },
                         };
                         fut::ok(())
                     }).spawn(ctx);
             }
             MasterRequest::Pid => {
-                self.sink.send(MasterResponse::Pid(
+                let _ = self.sink.send(MasterResponse::Pid(
                     format!("{}", nix::unistd::getpid())));
             },
             MasterRequest::Version => {
-                self.sink.send(MasterResponse::Version(
+                let _ = self.sink.send(MasterResponse::Version(
                     format!("{} {}", PKG_INFO.name, PKG_INFO.version)));
             },
             MasterRequest::Quit => {
                 self.cmd.call(cmd::Stop)
                     .then(|_, srv: &mut MasterClient, _| {
-                        srv.sink.send(MasterResponse::Done);
+                        let _ = srv.sink.send(MasterResponse::Done);
                         fut::ok(())
                     }).spawn(ctx);
             }

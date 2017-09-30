@@ -31,7 +31,7 @@ dependencies = [
 [[package]]
 name = "actix"
 version = "0.1.0"
-source = "git+https://github.com/fafhrd91/actix.git#dfac5c075f27eee37a158bd3426608853ef994cc"
+source = "git+https://github.com/fafhrd91/actix.git#8cbf11f65ef374a7cafed639845316e5173941c7"
 dependencies = [
  "bytes 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -251,7 +251,7 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
             ProcessMessage::Message(msg) => match msg {
                 WorkerMessage::forked => {
                     debug!("Worker forked (pid:{})", self.pid);
-                    self.sink.send(WorkerCommand::prepare);
+                    let _ = self.sink.send(WorkerCommand::prepare);
                 }
                 WorkerMessage::loaded => {
                     match self.state {
@@ -343,7 +343,7 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
                                 self.idx, self.pid, ProcessError::Heartbeat));
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
-                        self.sink.send(WorkerCommand::hb);
+                        let _ = self.sink.send(WorkerCommand::hb);
                         let fut = Box::new(
                                 Timeout::new(Duration::new(HEARTBEAT, 0), Arbiter::handle())
                                     .unwrap()
@@ -374,7 +374,7 @@ impl MessageHandler<SendCommand> for Process {
     fn handle(&mut self, msg: SendCommand, _: &mut Context<Process>)
               -> Response<Self, SendCommand>
     {
-        self.sink.send(msg.0);
+        let _ = self.sink.send(msg.0);
         ().to_response()
     }
 }
@@ -391,7 +391,7 @@ impl MessageHandler<StartProcess> for Process {
     fn handle(&mut self, _: StartProcess, _: &mut Context<Process>)
               -> Response<Self, StartProcess>
     {
-        self.sink.send(WorkerCommand::start);
+        let _ = self.sink.send(WorkerCommand::start);
         ().to_response()
     }
 }
@@ -408,7 +408,7 @@ impl MessageHandler<PauseProcess> for Process {
     fn handle(&mut self, _: PauseProcess, _: &mut Context<Process>)
               -> Response<Self, PauseProcess>
     {
-        self.sink.send(WorkerCommand::pause);
+        let _ = self.sink.send(WorkerCommand::pause);
         ().to_response()
     }
 }
@@ -425,7 +425,7 @@ impl MessageHandler<ResumeProcess> for Process {
     fn handle(&mut self, _: ResumeProcess, _: &mut Context<Process>)
               -> Response<Self, ResumeProcess>
     {
-        self.sink.send(WorkerCommand::resume);
+        let _ = self.sink.send(WorkerCommand::resume);
         ().to_response()
     }
 }
@@ -445,7 +445,7 @@ impl MessageHandler<StopProcess> for Process {
         info!("Stopping worker: (pid:{})", self.pid);
         match self.state {
             ProcessState::Running => {
-                self.sink.send(WorkerCommand::stop);
+                let _ = self.sink.send(WorkerCommand::stop);
 
                 self.state = ProcessState::Stopping;
                 if let Ok(timeout) = Timeout::new(
