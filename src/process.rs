@@ -310,7 +310,7 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
                         ctx.stop();
-                        return ().to_response()
+                        return Response::Empty()
                     },
                     _ => ()
                 }
@@ -326,7 +326,7 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
                         ctx.stop();
-                        return ().to_response()
+                        return Response::Empty()
                     },
                     _ => ()
                 }
@@ -355,10 +355,10 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
             ProcessMessage::Kill => {
                 let _ = kill(self.pid, Signal::SIGKILL);
                 ctx.stop();
-                return ().to_response()
+                return Response::Empty()
             }
         }
-        ().to_response()
+        Response::Empty()
     }
 }
 
@@ -375,7 +375,7 @@ impl MessageHandler<SendCommand> for Process {
               -> Response<Self, SendCommand>
     {
         let _ = self.sink.send(msg.0);
-        ().to_response()
+        Response::Empty()
     }
 }
 
@@ -392,7 +392,7 @@ impl MessageHandler<StartProcess> for Process {
               -> Response<Self, StartProcess>
     {
         let _ = self.sink.send(WorkerCommand::start);
-        ().to_response()
+        Response::Empty()
     }
 }
 
@@ -409,7 +409,7 @@ impl MessageHandler<PauseProcess> for Process {
               -> Response<Self, PauseProcess>
     {
         let _ = self.sink.send(WorkerCommand::pause);
-        ().to_response()
+        Response::Empty()
     }
 }
 
@@ -426,7 +426,7 @@ impl MessageHandler<ResumeProcess> for Process {
               -> Response<Self, ResumeProcess>
     {
         let _ = self.sink.send(WorkerCommand::resume);
-        ().to_response()
+        Response::Empty()
     }
 }
 
@@ -464,7 +464,7 @@ impl MessageHandler<StopProcess> for Process {
                 ctx.stop();
             }
         }
-        ().to_response()
+        Response::Empty()
     }
 }
 
@@ -482,7 +482,7 @@ impl MessageHandler<QuitProcess> for Process {
     {
         let _ = kill(self.pid, Signal::SIGQUIT);
         self.kill(ctx);
-        ().to_response()
+        Response::Empty()
     }
 }
 

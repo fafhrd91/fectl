@@ -55,7 +55,7 @@ impl MessageHandler<(UnixStream, std::os::unix::net::SocketAddr), io::Error> for
                              sink: ctx.add_sink(w)}
             }
         );
-        ().to_response()
+        Response::Empty()
     }
 }
 
@@ -296,7 +296,7 @@ impl MessageHandler<MasterRequest, io::Error> for MasterClient {
                     }).spawn(ctx);
             }
         };
-        ().to_response()
+        Response::Empty()
     }
 }
 
