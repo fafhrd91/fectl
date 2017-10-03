@@ -75,18 +75,17 @@ impl CommandCenter {
             self.state = State::Stopping;
             for service in self.services.values() {
                 self.stopping += 1;
-                service.call(service::Stop(graceful, Reason::Exit))
-                    .then(|res, srv: &mut CommandCenter, _: &mut Context<Self>| {
-                        srv.stopping -= 1;
-                        let exit = srv.stopping == 0;
-                        if exit {
-                            srv.exit(true);
-                        }
-                        match res {
-                            Ok(_) => fut::ok(()),
-                            Err(_) => fut::err(()),
-                        }
-                    }).spawn(ctx);
+                service.call(self, service::Stop(graceful, Reason::Exit)).then(|res, srv, _| {
+                    srv.stopping -= 1;
+                    let exit = srv.stopping == 0;
+                    if exit {
+                        srv.exit(true);
+                    }
+                    match res {
+                        Ok(_) => fut::ok(()),
+                        Err(_) => fut::err(()),
+                    }
+                }).spawn(ctx);
             };
         }
     }
@@ -109,7 +108,7 @@ impl Handler<ServicePids> for CommandCenter {
             State::Running => {
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.call(service::Pids).then(|res, _, _| match res {
+                        service.call(self, service::Pids).then(|res, _, _| match res {
                             Ok(Ok(status)) => fut::ok(status),
                             _ => fut::err(CommandError::UnknownService)
                         }).into(),
@@ -169,8 +168,7 @@ impl Handler<StartService> for CommandCenter {
                 info!("Starting service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.call(service::Start)
-                            .then(|res, _, _| match res {
+                        service.call(self, service::Start).then(|res, _, _| match res {
                                 Ok(Ok(status)) => fut::ok(status),
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
                                 Err(_) => fut::err(CommandError::NotReady)
@@ -204,7 +202,7 @@ impl Handler<StopService> for CommandCenter {
                 info!("Stopping service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.call(service::Stop(msg.1, Reason::ConsoleRequest))
+                        service.call(self, service::Stop(msg.1, Reason::ConsoleRequest))
                             .then(|res, _, _| match res {
                                 Ok(Ok(_)) => fut::ok(()),
                                 _ => fut::err(CommandError::ServiceStopped),
@@ -237,11 +235,10 @@ impl Handler<StatusService> for CommandCenter {
             State::Running => {
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.call(service::Status)
-                            .then(|res, _, _| match res {
-                                Ok(Ok(status)) => fut::ok(status),
-                                _ => fut::err(CommandError::UnknownService)
-                            }).into(),
+                        service.call(self, service::Status).then(|res, _, _| match res {
+                            Ok(Ok(status)) => fut::ok(status),
+                            _ => fut::err(CommandError::UnknownService)
+                        }).into(),
                     None => Response::Error(CommandError::UnknownService),
                 }
             }
@@ -269,12 +266,11 @@ impl Handler<PauseService> for CommandCenter {
                 info!("Pause service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.call(service::Pause)
-                            .then(|res, _, _| match res {
-                                Ok(Ok(_)) => fut::ok(()),
-                                Ok(Err(err)) => fut::err(CommandError::Service(err)),
-                                Err(_) => fut::err(CommandError::UnknownService)
-                            }).into(),
+                        service.call(self, service::Pause).then(|res, _, _| match res {
+                            Ok(Ok(_)) => fut::ok(()),
+                            Ok(Err(err)) => fut::err(CommandError::Service(err)),
+                            Err(_) => fut::err(CommandError::UnknownService)
+                        }).into(),
                     None => Response::Error(CommandError::UnknownService)
                 }
             }
@@ -304,8 +300,7 @@ impl Handler<ResumeService> for CommandCenter {
                 info!("Resume service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.call(service::Resume)
-                        .then(|res, _, _| match res {
+                        service.call(self, service::Resume).then(|res, _, _| match res {
                             Ok(Ok(_)) => fut::ok(()),
                             Ok(Err(err)) => fut::err(CommandError::Service(err)),
                             Err(_) => fut::err(CommandError::UnknownService)
@@ -340,8 +335,7 @@ impl Handler<ReloadService> for CommandCenter {
                 let graceful = msg.1;
                 match self.services.get(&msg.0) {
                     Some(service) =>
-                        service.call(service::Reload(graceful))
-                        .then(|res, _, _| match res {
+                        service.call(self, service::Reload(graceful)).then(|res, _, _| match res {
                             Ok(Ok(status)) => fut::ok(status),
                             Ok(Err(err)) => fut::err(CommandError::Service(err)),
                             Err(_) => fut::err(CommandError::UnknownService)
