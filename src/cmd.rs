@@ -95,12 +95,12 @@ impl CommandCenter {
 
 pub struct ServicePids(pub String);
 
-impl MessageResponse<ServicePids> for CommandCenter {
+impl ResponseType<ServicePids> for CommandCenter {
     type Item = Vec<String>;
     type Error = CommandError;
 }
 
-impl MessageHandler<ServicePids> for CommandCenter {
+impl Handler<ServicePids> for CommandCenter {
 
     fn handle(&mut self, msg: ServicePids,
               _: &mut Context<CommandCenter>) -> Response<Self, ServicePids>
@@ -123,12 +123,12 @@ impl MessageHandler<ServicePids> for CommandCenter {
 
 pub struct Stop;
 
-impl MessageResponse<Stop> for CommandCenter {
+impl ResponseType<Stop> for CommandCenter {
     type Item = bool;
     type Error = ();
 }
 
-impl MessageHandler<Stop> for CommandCenter {
+impl Handler<Stop> for CommandCenter {
 
     fn handle(&mut self, _: Stop, ctx: &mut Context<Self>) -> Response<Self, Stop>
     {
@@ -154,12 +154,12 @@ impl MessageHandler<Stop> for CommandCenter {
 /// Start Service by `name`
 pub struct StartService(pub String);
 
-impl MessageResponse<StartService> for CommandCenter {
+impl ResponseType<StartService> for CommandCenter {
     type Item = StartStatus;
     type Error = CommandError;
 }
 
-impl MessageHandler<StartService> for CommandCenter {
+impl Handler<StartService> for CommandCenter {
 
     fn handle(&mut self, msg: StartService,
               _: &mut Context<CommandCenter>) -> Response<Self, StartService>
@@ -189,12 +189,12 @@ impl MessageHandler<StartService> for CommandCenter {
 /// Stop Service by `name`
 pub struct StopService(pub String, pub bool);
 
-impl MessageResponse<StopService> for CommandCenter {
+impl ResponseType<StopService> for CommandCenter {
     type Item = ();
     type Error = CommandError;
 }
 
-impl MessageHandler<StopService> for CommandCenter {
+impl Handler<StopService> for CommandCenter {
 
     fn handle(&mut self, msg: StopService,
               _: &mut Context<CommandCenter>) -> Response<Self, StopService>
@@ -223,12 +223,12 @@ impl MessageHandler<StopService> for CommandCenter {
 /// Service status message
 pub struct StatusService(pub String);
 
-impl MessageResponse<StatusService> for CommandCenter {
+impl ResponseType<StatusService> for CommandCenter {
     type Item = ServiceStatus;
     type Error = CommandError;
 }
 
-impl MessageHandler<StatusService> for CommandCenter {
+impl Handler<StatusService> for CommandCenter {
 
     fn handle(&mut self, msg: StatusService,
               _: &mut Context<CommandCenter>) -> Response<Self, StatusService>
@@ -254,12 +254,12 @@ impl MessageHandler<StatusService> for CommandCenter {
 /// Pause service message
 pub struct PauseService(pub String);
 
-impl MessageResponse<PauseService> for CommandCenter {
+impl ResponseType<PauseService> for CommandCenter {
     type Item = ();
     type Error = CommandError;
 }
 
-impl MessageHandler<PauseService> for CommandCenter {
+impl Handler<PauseService> for CommandCenter {
 
     fn handle(&mut self, msg: PauseService,
               _: &mut Context<CommandCenter>) -> Response<Self, PauseService>
@@ -289,12 +289,12 @@ impl MessageHandler<PauseService> for CommandCenter {
 /// Resume service message
 pub struct ResumeService(pub String);
 
-impl MessageResponse<ResumeService> for CommandCenter {
+impl ResponseType<ResumeService> for CommandCenter {
     type Item = ();
     type Error = CommandError;
 }
 
-impl MessageHandler<ResumeService> for CommandCenter {
+impl Handler<ResumeService> for CommandCenter {
 
     fn handle(&mut self, msg: ResumeService,
               _: &mut Context<CommandCenter>) -> Response<Self, ResumeService>
@@ -324,12 +324,12 @@ impl MessageHandler<ResumeService> for CommandCenter {
 /// Reload service
 pub struct ReloadService(pub String, pub bool);
 
-impl MessageResponse<ReloadService> for CommandCenter {
+impl ResponseType<ReloadService> for CommandCenter {
     type Item = ReloadStatus;
     type Error = CommandError;
 }
 
-impl MessageHandler<ReloadService> for CommandCenter {
+impl Handler<ReloadService> for CommandCenter {
 
     fn handle(&mut self, msg: ReloadService, _: &mut Context<Self>)
               -> Response<Self, ReloadService>
@@ -360,12 +360,12 @@ impl MessageHandler<ReloadService> for CommandCenter {
 /// reload all services
 pub struct ReloadAll;
 
-impl MessageResponse<ReloadAll> for CommandCenter {
+impl ResponseType<ReloadAll> for CommandCenter {
     type Item = ();
     type Error = CommandError;
 }
 
-impl MessageHandler<ReloadAll> for CommandCenter {
+impl Handler<ReloadAll> for CommandCenter {
 
     fn handle(&mut self, _: ReloadAll, _: &mut Context<Self>) -> Response<Self, ReloadAll>
     {
@@ -382,13 +382,13 @@ impl MessageHandler<ReloadAll> for CommandCenter {
     }
 }
 
-impl MessageResponse<signal::Signal> for CommandCenter {
+impl ResponseType<signal::Signal> for CommandCenter {
     type Item = ();
     type Error = ();
 }
 
 /// Handle ProcessEvent (SIGHUP, SIGINT, etc)
-impl MessageHandler<signal::Signal> for CommandCenter {
+impl Handler<signal::Signal> for CommandCenter {
 
     fn handle(&mut self, msg: signal::Signal, ctx: &mut Context<Self>)
               -> Response<Self, signal::Signal>
@@ -448,6 +448,7 @@ impl MessageHandler<signal::Signal> for CommandCenter {
 
 
 impl Actor for CommandCenter {
+    type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>)
     {

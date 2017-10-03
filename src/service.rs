@@ -198,6 +198,8 @@ impl FeService {
 
 impl Actor for FeService {
 
+    type Context = Context<Self>;
+
     fn started(&mut self, _: &mut Context<Self>) {
         // start workers
         for worker in self.workers.iter_mut() {
@@ -208,12 +210,12 @@ impl Actor for FeService {
 
 pub struct ProcessMessage(pub usize, pub Pid, pub WorkerMessage);
 
-impl MessageResponse<ProcessMessage> for FeService {
+impl ResponseType<ProcessMessage> for FeService {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<ProcessMessage> for FeService {
+impl Handler<ProcessMessage> for FeService {
 
     fn handle(&mut self, msg: ProcessMessage, _: &mut Context<Self>)
               -> Response<Self, ProcessMessage>
@@ -226,12 +228,12 @@ impl MessageHandler<ProcessMessage> for FeService {
 
 pub struct ProcessFailed(pub usize, pub Pid, pub ProcessError);
 
-impl MessageResponse<ProcessFailed> for FeService {
+impl ResponseType<ProcessFailed> for FeService {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<ProcessFailed> for FeService {
+impl Handler<ProcessFailed> for FeService {
 
     fn handle(&mut self, msg: ProcessFailed, _: &mut Context<Self>)
               -> Response<Self, ProcessFailed>
@@ -244,12 +246,12 @@ impl MessageHandler<ProcessFailed> for FeService {
 
 pub struct ProcessLoaded(pub usize, pub Pid);
 
-impl MessageResponse<ProcessLoaded> for FeService {
+impl ResponseType<ProcessLoaded> for FeService {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<ProcessLoaded> for FeService {
+impl Handler<ProcessLoaded> for FeService {
 
     fn handle(&mut self, msg: ProcessLoaded, _: &mut Context<Self>)
               -> Response<Self, ProcessLoaded>
@@ -262,12 +264,12 @@ impl MessageHandler<ProcessLoaded> for FeService {
 
 pub struct ProcessExited(pub Pid, pub ProcessError);
 
-impl MessageResponse<ProcessExited> for FeService {
+impl ResponseType<ProcessExited> for FeService {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<ProcessExited> for FeService {
+impl Handler<ProcessExited> for FeService {
 
     fn handle(&mut self, msg: ProcessExited, _: &mut Context<Self>)
               -> Response<Self, ProcessExited>
@@ -283,12 +285,12 @@ impl MessageHandler<ProcessExited> for FeService {
 /// Service status command
 pub struct Pids;
 
-impl MessageResponse<Pids> for FeService {
+impl ResponseType<Pids> for FeService {
     type Item = Vec<String>;
     type Error = ();
 }
 
-impl MessageHandler<Pids> for FeService {
+impl Handler<Pids> for FeService {
 
     fn handle(&mut self, _: Pids, _: &mut Context<Self>) -> Response<Self, Pids>
     {
@@ -305,12 +307,12 @@ impl MessageHandler<Pids> for FeService {
 /// Service status command
 pub struct Status;
 
-impl MessageResponse<Status> for FeService {
+impl ResponseType<Status> for FeService {
     type Item = (String, Vec<(String, Vec<Event>)>);
     type Error = ();
 }
 
-impl MessageHandler<Status> for FeService {
+impl Handler<Status> for FeService {
 
     fn handle(&mut self, _: Status, _: &mut Context<Self>) -> Response<Self, Status>
     {
@@ -331,12 +333,12 @@ impl MessageHandler<Status> for FeService {
 /// Start service command
 pub struct Start;
 
-impl MessageResponse<Start> for FeService {
+impl ResponseType<Start> for FeService {
     type Item = StartStatus;
     type Error = ServiceOperationError;
 }
 
-impl MessageHandler<Start> for FeService {
+impl Handler<Start> for FeService {
 
     fn handle(&mut self, _: Start, _: &mut Context<Self>) -> Response<Self, Start>
     {
@@ -369,12 +371,12 @@ impl MessageHandler<Start> for FeService {
 /// Pause service command
 pub struct Pause;
 
-impl MessageResponse<Pause> for FeService {
+impl ResponseType<Pause> for FeService {
     type Item = ();
     type Error = ServiceOperationError;
 }
 
-impl MessageHandler<Pause> for FeService {
+impl Handler<Pause> for FeService {
 
     fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> Response<Self, Pause>
     {
@@ -395,12 +397,12 @@ impl MessageHandler<Pause> for FeService {
 /// Resume service command
 pub struct Resume;
 
-impl MessageResponse<Resume> for FeService {
+impl ResponseType<Resume> for FeService {
     type Item = ();
     type Error = ServiceOperationError;
 }
 
-impl MessageHandler<Resume> for FeService {
+impl Handler<Resume> for FeService {
 
     fn handle(&mut self, _: Resume, _: &mut Context<Self>) -> Response<Self, Resume>
     {
@@ -421,12 +423,12 @@ impl MessageHandler<Resume> for FeService {
 /// Reload service
 pub struct Reload(pub bool);
 
-impl MessageResponse<Reload> for FeService {
+impl ResponseType<Reload> for FeService {
     type Item = ReloadStatus;
     type Error = ServiceOperationError;
 }
 
-impl MessageHandler<Reload> for FeService {
+impl Handler<Reload> for FeService {
 
     fn handle(&mut self, msg: Reload, _: &mut Context<Self>) -> Response<Self, Reload>
     {
@@ -459,12 +461,12 @@ impl MessageHandler<Reload> for FeService {
 /// Stop service command
 pub struct Stop(pub bool, pub Reason);
 
-impl MessageResponse<Stop> for FeService {
+impl ResponseType<Stop> for FeService {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<Stop> for FeService {
+impl Handler<Stop> for FeService {
 
     fn handle(&mut self, msg: Stop, _: &mut Context<Self>) -> Response<Self, Stop>
     {

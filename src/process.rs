@@ -38,10 +38,16 @@ pub struct Process {
     timeout: Duration,
     startup_timeout: u64,
     shutdown_timeout: u64,
-    sink: actix::Sink<WorkerCommand, io::Error>,
 }
 
-impl Actor for Process {}
+impl Actor for Process {
+    type Context = FramedContext<Self>;
+}
+
+impl FramedActor for Process {
+    type Io = PipeFile;
+    type Codec = TransportCodec;
+}
 
 #[derive(Debug)]
 enum ProcessState {
@@ -137,10 +143,8 @@ impl Process {
         let shutdown_timeout = cfg.shutdown_timeout as u64;
 
         // start Process service
-        let (r, w) = pipe.actix_framed(TransportCodec, TransportCodec);
-        let addr = Process::create(
+        let addr = Process::create_framed(pipe, TransportCodec,
             move |ctx| {
-                ctx.add_stream(r);
                 ctx.add_future(
                     Timeout::new(Duration::new(startup_timeout as u64, 0), Arbiter::handle())
                         .unwrap()
@@ -156,7 +160,6 @@ impl Process {
                     timeout: timeout,
                     startup_timeout: startup_timeout,
                     shutdown_timeout: shutdown_timeout,
-                    sink: ctx.add_sink(w)
                 }
             });
         (pid, Some(addr))
@@ -210,12 +213,17 @@ impl Process {
         Ok((p_read, p_write, ch_read, ch_write))
     }
 
-    fn kill(&self, ctx: &mut Context<Self>) {
-        let fut = Box::new(
-            Timeout::new(Duration::new(1, 0), Arbiter::handle())
-                .unwrap()
-                .map(|_| ProcessMessage::Kill));
-        ctx.add_future(fut);
+    fn kill(&self, ctx: &mut FramedContext<Self>, graceful: bool) {
+        if graceful {
+            let fut = Box::new(
+                Timeout::new(Duration::new(1, 0), Arbiter::handle())
+                    .unwrap()
+                    .map(|_| ProcessMessage::Kill));
+            ctx.add_future(fut);
+        } else {
+            let _ = kill(self.pid, Signal::SIGKILL);
+            ctx.terminate();
+        }
     }
 }
 
@@ -227,31 +235,30 @@ impl Drop for Process {
 
 impl StreamHandler<ProcessMessage, io::Error> for Process {
 
-    fn finished(&mut self, ctx: &mut Context<Self>)
-    {
-        self.kill(ctx);
+    fn finished(&mut self, ctx: &mut FramedContext<Self>) {
+        self.kill(ctx, false);
     }
 }
 
-impl MessageResponse<ProcessMessage> for Process {
+impl ResponseType<ProcessMessage> for Process {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<ProcessMessage, io::Error> for Process {
+impl Handler<ProcessMessage, io::Error> for Process {
 
-    fn error(&mut self, _: io::Error, ctx: &mut Context<Self>) {
-        self.kill(ctx)
+    fn error(&mut self, _: io::Error, ctx: &mut FramedContext<Self>) {
+        self.kill(ctx, false)
     }
 
-    fn handle(&mut self, msg: ProcessMessage, ctx: &mut Context<Self>)
+    fn handle(&mut self, msg: ProcessMessage, ctx: &mut FramedContext<Self>)
               -> Response<Self, ProcessMessage>
     {
         match msg {
             ProcessMessage::Message(msg) => match msg {
                 WorkerMessage::forked => {
                     debug!("Worker forked (pid:{})", self.pid);
-                    let _ = self.sink.send(WorkerCommand::prepare);
+                    let _ = ctx.send(WorkerCommand::prepare);
                 }
                 WorkerMessage::loaded => {
                     match self.state {
@@ -343,7 +350,7 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
                                 self.idx, self.pid, ProcessError::Heartbeat));
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
-                        let _ = self.sink.send(WorkerCommand::hb);
+                        let _ = ctx.send(WorkerCommand::hb);
                         let fut = Box::new(
                                 Timeout::new(Duration::new(HEARTBEAT, 0), Arbiter::handle())
                                     .unwrap()
@@ -353,6 +360,7 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
                 }
             }
             ProcessMessage::Kill => {
+                println!("kill received");
                 let _ = kill(self.pid, Signal::SIGKILL);
                 ctx.stop();
                 return Response::Empty()
@@ -364,88 +372,88 @@ impl MessageHandler<ProcessMessage, io::Error> for Process {
 
 pub struct SendCommand(pub WorkerCommand);
 
-impl MessageResponse<SendCommand> for Process {
+impl ResponseType<SendCommand> for Process {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<SendCommand> for Process {
+impl Handler<SendCommand> for Process {
 
-    fn handle(&mut self, msg: SendCommand, _: &mut Context<Process>)
+    fn handle(&mut self, msg: SendCommand, ctx: &mut FramedContext<Process>)
               -> Response<Self, SendCommand>
     {
-        let _ = self.sink.send(msg.0);
+        let _ = ctx.send(msg.0);
         Response::Empty()
     }
 }
 
 pub struct StartProcess;
 
-impl MessageResponse<StartProcess> for Process {
+impl ResponseType<StartProcess> for Process {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<StartProcess> for Process {
+impl Handler<StartProcess> for Process {
 
-    fn handle(&mut self, _: StartProcess, _: &mut Context<Process>)
+    fn handle(&mut self, _: StartProcess, ctx: &mut FramedContext<Process>)
               -> Response<Self, StartProcess>
     {
-        let _ = self.sink.send(WorkerCommand::start);
+        let _ = ctx.send(WorkerCommand::start);
         Response::Empty()
     }
 }
 
 pub struct PauseProcess;
 
-impl MessageResponse<PauseProcess> for Process {
+impl ResponseType<PauseProcess> for Process {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<PauseProcess> for Process {
+impl Handler<PauseProcess> for Process {
 
-    fn handle(&mut self, _: PauseProcess, _: &mut Context<Process>)
+    fn handle(&mut self, _: PauseProcess, ctx: &mut FramedContext<Process>)
               -> Response<Self, PauseProcess>
     {
-        let _ = self.sink.send(WorkerCommand::pause);
+        let _ = ctx.send(WorkerCommand::pause);
         Response::Empty()
     }
 }
 
 pub struct ResumeProcess;
 
-impl MessageResponse<ResumeProcess> for Process {
+impl ResponseType<ResumeProcess> for Process {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<ResumeProcess> for Process {
+impl Handler<ResumeProcess> for Process {
 
-    fn handle(&mut self, _: ResumeProcess, _: &mut Context<Process>)
+    fn handle(&mut self, _: ResumeProcess, ctx: &mut FramedContext<Process>)
               -> Response<Self, ResumeProcess>
     {
-        let _ = self.sink.send(WorkerCommand::resume);
+        let _ = ctx.send(WorkerCommand::resume);
         Response::Empty()
     }
 }
 
 pub struct StopProcess;
 
-impl MessageResponse<StopProcess> for Process {
+impl ResponseType<StopProcess> for Process {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<StopProcess> for Process {
+impl Handler<StopProcess> for Process {
 
-    fn handle(&mut self, _: StopProcess, ctx: &mut Context<Process>)
+    fn handle(&mut self, _: StopProcess, ctx: &mut FramedContext<Process>)
               -> Response<Self, StopProcess>
     {
         info!("Stopping worker: (pid:{})", self.pid);
         match self.state {
             ProcessState::Running => {
-                let _ = self.sink.send(WorkerCommand::stop);
+                let _ = ctx.send(WorkerCommand::stop);
 
                 self.state = ProcessState::Stopping;
                 if let Ok(timeout) = Timeout::new(
@@ -456,38 +464,43 @@ impl MessageHandler<StopProcess> for Process {
                 } else {
                     // can not create timeout
                     let _ = kill(self.pid, Signal::SIGQUIT);
-                    ctx.stop();
+                    ctx.terminate();
                 }
             },
             _ => {
                 let _ = kill(self.pid, Signal::SIGQUIT);
-                ctx.stop();
+                ctx.terminate();
             }
         }
         Response::Empty()
     }
 }
 
-pub struct QuitProcess;
+pub struct QuitProcess(pub bool);
 
-impl MessageResponse<QuitProcess> for Process {
+impl ResponseType<QuitProcess> for Process {
     type Item = ();
     type Error = ();
 }
 
-impl MessageHandler<QuitProcess> for Process {
+impl Handler<QuitProcess> for Process {
 
-    fn handle(&mut self, _: QuitProcess, ctx: &mut Context<Process>)
+    fn handle(&mut self, msg: QuitProcess, ctx: &mut FramedContext<Process>)
               -> Response<Self, QuitProcess>
     {
-        let _ = kill(self.pid, Signal::SIGQUIT);
-        self.kill(ctx);
+        if msg.0 {
+            let _ = kill(self.pid, Signal::SIGQUIT);
+            self.kill(ctx, true);
+        } else {
+            self.kill(ctx, false);
+            let _ = kill(self.pid, Signal::SIGKILL);
+            ctx.terminate();
+        }
         Response::Empty()
     }
 }
 
-
-struct TransportCodec;
+pub struct TransportCodec;
 
 impl Decoder for TransportCodec {
     type Item = ProcessMessage;
