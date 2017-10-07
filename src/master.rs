@@ -49,7 +49,7 @@ impl Handler<(UnixStream, std::os::unix::net::SocketAddr), io::Error> for Master
     {
         let cmd = self.cmd.clone();
         let _: () = MasterClient{cmd: cmd}.framed(msg.0, MasterTransportCodec);
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -289,7 +289,7 @@ impl Handler<MasterRequest, io::Error> for MasterClient {
                 }).spawn(ctx);
             }
         };
-        Response::Empty()
+        Self::empty()
     }
 }
 

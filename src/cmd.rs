@@ -112,10 +112,10 @@ impl Handler<ServicePids> for CommandCenter {
                             Ok(Ok(status)) => fut::ok(status),
                             _ => fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Response::Error(CommandError::UnknownService)
+                    None => Self::reply_error(CommandError::UnknownService)
                 }
             }
-            _ => Response::Error(CommandError::NotReady)
+            _ => Self::reply_error(CommandError::NotReady)
         }
     }
 }
@@ -173,12 +173,12 @@ impl Handler<StartService> for CommandCenter {
                                 Ok(Err(err)) => fut::err(CommandError::Service(err)),
                                 Err(_) => fut::err(CommandError::NotReady)
                             }).into(),
-                    None => Response::Error(CommandError::UnknownService)
+                    None => Self::reply_error(CommandError::UnknownService)
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Response::Error(CommandError::NotReady)
+                Self::reply_error(CommandError::NotReady)
             }
         }
     }
@@ -207,12 +207,12 @@ impl Handler<StopService> for CommandCenter {
                                 Ok(Ok(_)) => fut::ok(()),
                                 _ => fut::err(CommandError::ServiceStopped),
                             }).into(),
-                    None => Response::Error(CommandError::UnknownService)
+                    None => Self::reply_error(CommandError::UnknownService)
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Response::Error(CommandError::NotReady)
+                Self::reply_error(CommandError::NotReady)
             }
         }
     }
@@ -239,10 +239,10 @@ impl Handler<StatusService> for CommandCenter {
                             Ok(Ok(status)) => fut::ok(status),
                             _ => fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Response::Error(CommandError::UnknownService),
+                    None => Self::reply_error(CommandError::UnknownService),
                 }
             }
-            _ => Response::Error(CommandError::NotReady)
+            _ => Self::reply_error(CommandError::NotReady)
         }
     }
 }
@@ -271,12 +271,12 @@ impl Handler<PauseService> for CommandCenter {
                             Ok(Err(err)) => fut::err(CommandError::Service(err)),
                             Err(_) => fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Response::Error(CommandError::UnknownService)
+                    None => Self::reply_error(CommandError::UnknownService)
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Response::Error(CommandError::NotReady)
+                Self::reply_error(CommandError::NotReady)
             }
         }
     }
@@ -305,12 +305,12 @@ impl Handler<ResumeService> for CommandCenter {
                             Ok(Err(err)) => fut::err(CommandError::Service(err)),
                             Err(_) => fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Response::Error(CommandError::UnknownService)
+                    None => Self::reply_error(CommandError::UnknownService)
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Response::Error(CommandError::NotReady)
+                Self::reply_error(CommandError::NotReady)
             }
         }
     }
@@ -340,12 +340,12 @@ impl Handler<ReloadService> for CommandCenter {
                             Ok(Err(err)) => fut::err(CommandError::Service(err)),
                             Err(_) => fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Response::Error(CommandError::UnknownService)
+                    None => Self::reply_error(CommandError::UnknownService)
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Response::Error(CommandError::NotReady)
+                Self::reply_error(CommandError::NotReady)
             }
         }
     }
@@ -372,7 +372,7 @@ impl Handler<ReloadAll> for CommandCenter {
             }
             _ => warn!("Can not reload in system in `{:?}` state", self.state)
         };
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -436,7 +436,7 @@ impl Handler<signal::Signal> for CommandCenter {
                 }
             }
         };
-        Response::Empty()
+        Self::empty()
     }
 }
 

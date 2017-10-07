@@ -222,7 +222,7 @@ impl Handler<ProcessMessage> for FeService {
     {
         self.workers[msg.0].message(msg.1, &msg.2);
         self.update();
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -240,7 +240,7 @@ impl Handler<ProcessFailed> for FeService {
     {
         self.workers[msg.0].exited(msg.1, &msg.2);
         self.update();
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -258,7 +258,7 @@ impl Handler<ProcessLoaded> for FeService {
     {
         self.workers[msg.0].loaded(msg.1);
         self.update();
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -278,7 +278,7 @@ impl Handler<ProcessExited> for FeService {
             worker.exited(msg.0, &msg.1);
         }
         self.update();
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -300,7 +300,7 @@ impl Handler<Pids> for FeService {
                 pids.push(format!("{}", pid));
             }
         }
-        Response::Reply(pids)
+        Self::reply(pids)
     }
 }
 
@@ -326,7 +326,7 @@ impl Handler<Status> for FeService {
             ServiceState::Running => if self.paused { "paused" } else { "running" }
             _ => self.state.description()
         };
-        Response::Reply((status.to_owned(), events))
+        Self::reply((status.to_owned(), events))
     }
 }
 
@@ -363,7 +363,7 @@ impl Handler<Start> for FeService {
                     Err(_) => fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
             }
-            _ => Response::Error(self.state.error())
+            _ => Self::reply_error(self.state.error())
         }
     }
 }
@@ -387,9 +387,9 @@ impl Handler<Pause> for FeService {
                     worker.pause(Reason::ConsoleRequest);
                 }
                 self.paused = true;
-                Response::Empty()
+                Self::empty()
             }
-            _ => Response::Error(self.state.error())
+            _ => Self::reply_error(self.state.error())
         }
     }
 }
@@ -413,9 +413,9 @@ impl Handler<Resume> for FeService {
                     worker.resume(Reason::ConsoleRequest);
                 }
                 self.paused = false;
-                Response::Empty()
+                Self::empty()
             }
-            _ => Response::Error(self.state.error())
+            _ => Self::reply_error(self.state.error())
         }
     }
 }
@@ -453,7 +453,7 @@ impl Handler<Reload> for FeService {
                     Err(_) => fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
             }
-            _ => Response::Error(self.state.error())
+            _ => Self::reply_error(self.state.error())
         }
     }
 }
@@ -475,7 +475,7 @@ impl Handler<Stop> for FeService {
         match state {
             ServiceState::Failed | ServiceState::Stopped => {
                 self.state = state;
-                return Response::Error(())
+                return Self::reply_error(())
             },
             ServiceState::Stopping(mut task) => {
                 let rx = task.wait();

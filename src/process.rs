@@ -317,7 +317,7 @@ impl Handler<ProcessMessage, io::Error> for Process {
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
                         ctx.stop();
-                        return Response::Empty()
+                        return Self::empty()
                     },
                     _ => ()
                 }
@@ -333,7 +333,7 @@ impl Handler<ProcessMessage, io::Error> for Process {
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
                         ctx.stop();
-                        return Response::Empty()
+                        return Self::empty()
                     },
                     _ => ()
                 }
@@ -363,10 +363,10 @@ impl Handler<ProcessMessage, io::Error> for Process {
                 println!("kill received");
                 let _ = kill(self.pid, Signal::SIGKILL);
                 ctx.stop();
-                return Response::Empty()
+                return Self::empty()
             }
         }
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -383,7 +383,7 @@ impl Handler<SendCommand> for Process {
               -> Response<Self, SendCommand>
     {
         let _ = ctx.send(msg.0);
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -400,7 +400,7 @@ impl Handler<StartProcess> for Process {
               -> Response<Self, StartProcess>
     {
         let _ = ctx.send(WorkerCommand::start);
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -417,7 +417,7 @@ impl Handler<PauseProcess> for Process {
               -> Response<Self, PauseProcess>
     {
         let _ = ctx.send(WorkerCommand::pause);
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -434,7 +434,7 @@ impl Handler<ResumeProcess> for Process {
               -> Response<Self, ResumeProcess>
     {
         let _ = ctx.send(WorkerCommand::resume);
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -472,7 +472,7 @@ impl Handler<StopProcess> for Process {
                 ctx.terminate();
             }
         }
-        Response::Empty()
+        Self::empty()
     }
 }
 
@@ -496,7 +496,7 @@ impl Handler<QuitProcess> for Process {
             let _ = kill(self.pid, Signal::SIGKILL);
             ctx.terminate();
         }
-        Response::Empty()
+        Self::empty()
     }
 }
 
