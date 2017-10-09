@@ -143,8 +143,8 @@ impl Process {
         // start Process service
         let addr = Process::create_framed(
             pipe, TransportCodec, move |ctx| {
-                ctx.add_timeout(ProcessMessage::StartupTimeout,
-                                Duration::new(startup_timeout as u64, 0));
+                ctx.notify(ProcessMessage::StartupTimeout,
+                           Duration::new(startup_timeout as u64, 0));
                 Process {
                     idx: idx,
                     pid: pid,
@@ -209,7 +209,7 @@ impl Process {
 
     fn kill(&self, ctx: &mut FramedContext<Self>, graceful: bool) {
         if graceful {
-            ctx.add_timeout(ProcessMessage::Kill, Duration::new(1, 0));
+            ctx.notify(ProcessMessage::Kill, Duration::new(1, 0));
         } else {
             let _ = kill(self.pid, Signal::SIGKILL);
             ctx.terminate();
@@ -260,8 +260,8 @@ impl Handler<ProcessMessage, io::Error> for Process {
                             // start heartbeat timer
                             self.state = ProcessState::Running;
                             self.hb = Instant::now();
-                            ctx.add_timeout(
-                                ProcessMessage::Heartbeat, Duration::new(HEARTBEAT, 0));
+                            ctx.notify(ProcessMessage::Heartbeat,
+                                       Duration::new(HEARTBEAT, 0));
                         },
                         _ => {
                             warn!("Received `loaded` message from worker (pid:{})", self.pid);
@@ -337,7 +337,7 @@ impl Handler<ProcessMessage, io::Error> for Process {
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
                         let _ = ctx.send(WorkerCommand::hb);
-                        ctx.add_timeout(
+                        ctx.notify(
                             ProcessMessage::Heartbeat, Duration::new(HEARTBEAT, 0));
                     }
                 }
@@ -438,8 +438,8 @@ impl Handler<StopProcess> for Process {
                 self.state = ProcessState::Stopping;
 
                 let _ = ctx.send(WorkerCommand::stop);
-                ctx.add_timeout(ProcessMessage::StopTimeout,
-                                Duration::new(self.shutdown_timeout, 0));
+                ctx.notify(ProcessMessage::StopTimeout,
+                           Duration::new(self.shutdown_timeout, 0));
                 let _ = kill(self.pid, Signal::SIGTERM);
             },
             _ => {

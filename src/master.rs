@@ -3,6 +3,7 @@ use std::io;
 use std::rc::Rc;
 use std::ffi::OsStr;
 use std::time::Duration;
+use std::thread;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
@@ -352,14 +353,21 @@ pub fn start(cfg: Config) -> bool {
         return false
     }
 
-    // sem
-    match std::net::TcpListener::bind(HOST) {
-        Ok(listener) => {
-            std::mem::forget(listener);
-        }
-        Err(_) => {
-            error!("Can not start: Another process is running.");
-            return false
+    // check if other app is running
+    for idx in 0..10 {
+        match std::net::TcpListener::bind(HOST) {
+            Ok(listener) => {
+                std::mem::forget(listener);
+                break
+            }
+            Err(_) => {
+                if idx == 8 {
+                    error!("Can not start: Another process is running.");
+                    return false
+                }
+                info!("Trying to bind address, sleep for 5 seconds");
+                thread::sleep(Duration::new(5, 0));
+            }
         }
     }
 

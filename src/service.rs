@@ -240,7 +240,7 @@ impl Handler<ProcessFailed> for FeService {
               -> Response<Self, ProcessFailed>
     {
         // TODO: delay failure processing, needs better approach
-        ctx.run_after(Duration::new(5, 0), move |act, _| {
+        ctx.run_later(Duration::new(5, 0), move |act, _| {
             act.workers[msg.0].exited(msg.1, &msg.2);
             act.update();
         });
