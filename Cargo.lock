@@ -31,7 +31,7 @@ dependencies = [
 [[package]]
 name = "actix"
 version = "0.1.0"
-source = "git+https://github.com/fafhrd91/actix.git#5fa5967ff20433c2ca309cdc2bed63c7117ecf48"
+source = "git+https://github.com/fafhrd91/actix.git#e7877acd9b281eef5a5619ad9f29cfd1cdb610a4"
 dependencies = [
  "crossbeam 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",

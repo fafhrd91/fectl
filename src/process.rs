@@ -7,10 +7,8 @@ use std::os::unix::io::RawFd;
 use std::time::{Duration, Instant};
 
 use serde_json as json;
-use futures::Future;
 use byteorder::{ByteOrder, BigEndian};
 use bytes::{BytesMut, BufMut};
-use tokio_core::reactor::Timeout;
 use tokio_io::codec::{Encoder, Decoder};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::{close, pipe, fork, ForkResult, Pid};
@@ -143,14 +141,10 @@ impl Process {
         let shutdown_timeout = cfg.shutdown_timeout as u64;
 
         // start Process service
-        let addr = Process::create_framed(pipe, TransportCodec,
-            move |ctx| {
-                ctx.add_future(
-                    Timeout::new(Duration::new(startup_timeout as u64, 0), Arbiter::handle())
-                        .unwrap()
-                        .map(|_| ProcessMessage::StartupTimeout)
-                );
-
+        let addr = Process::create_framed(
+            pipe, TransportCodec, move |ctx| {
+                ctx.add_timeout(ProcessMessage::StartupTimeout,
+                                Duration::new(startup_timeout as u64, 0));
                 Process {
                     idx: idx,
                     pid: pid,
@@ -215,11 +209,7 @@ impl Process {
 
     fn kill(&self, ctx: &mut FramedContext<Self>, graceful: bool) {
         if graceful {
-            let fut = Box::new(
-                Timeout::new(Duration::new(1, 0), Arbiter::handle())
-                    .unwrap()
-                    .map(|_| ProcessMessage::Kill));
-            ctx.add_future(fut);
+            ctx.add_timeout(ProcessMessage::Kill, Duration::new(1, 0));
         } else {
             let _ = kill(self.pid, Signal::SIGKILL);
             ctx.terminate();
@@ -270,12 +260,8 @@ impl Handler<ProcessMessage, io::Error> for Process {
                             // start heartbeat timer
                             self.state = ProcessState::Running;
                             self.hb = Instant::now();
-                            let fut = Box::new(
-                                Timeout::new(
-                                    Duration::new(HEARTBEAT, 0), Arbiter::handle())
-                                    .unwrap()
-                                    .map(|_| ProcessMessage::Heartbeat));
-                            ctx.add_future(fut);
+                            ctx.add_timeout(
+                                ProcessMessage::Heartbeat, Duration::new(HEARTBEAT, 0));
                         },
                         _ => {
                             warn!("Received `loaded` message from worker (pid:{})", self.pid);
@@ -351,11 +337,8 @@ impl Handler<ProcessMessage, io::Error> for Process {
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
                         let _ = ctx.send(WorkerCommand::hb);
-                        let fut = Box::new(
-                                Timeout::new(Duration::new(HEARTBEAT, 0), Arbiter::handle())
-                                    .unwrap()
-                                    .map(|_| ProcessMessage::Heartbeat));
-                        ctx.add_future(fut);
+                        ctx.add_timeout(
+                            ProcessMessage::Heartbeat, Duration::new(HEARTBEAT, 0));
                     }
                 }
             }
@@ -453,19 +436,12 @@ impl Handler<StopProcess> for Process {
         info!("Stopping worker: (pid:{})", self.pid);
         match self.state {
             ProcessState::Running => {
-                let _ = ctx.send(WorkerCommand::stop);
-
                 self.state = ProcessState::Stopping;
-                if let Ok(timeout) = Timeout::new(
-                    Duration::new(self.shutdown_timeout, 0), Arbiter::handle())
-                {
-                    ctx.add_future(timeout.map(|_| ProcessMessage::StopTimeout));
-                    let _ = kill(self.pid, Signal::SIGTERM);
-                } else {
-                    // can not create timeout
-                    let _ = kill(self.pid, Signal::SIGQUIT);
-                    ctx.terminate();
-                }
+
+                let _ = ctx.send(WorkerCommand::stop);
+                ctx.add_timeout(ProcessMessage::StopTimeout,
+                                Duration::new(self.shutdown_timeout, 0));
+                let _ = kill(self.pid, Signal::SIGTERM);
             },
             _ => {
                 let _ = kill(self.pid, Signal::SIGQUIT);
