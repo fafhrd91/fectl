@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std;
+use std::time::Duration;
 use nix::unistd::Pid;
 
 use actix::prelude::*;
@@ -235,11 +236,14 @@ impl ResponseType<ProcessFailed> for FeService {
 
 impl Handler<ProcessFailed> for FeService {
 
-    fn handle(&mut self, msg: ProcessFailed, _: &mut Context<Self>)
+    fn handle(&mut self, msg: ProcessFailed, ctx: &mut Context<Self>)
               -> Response<Self, ProcessFailed>
     {
-        self.workers[msg.0].exited(msg.1, &msg.2);
-        self.update();
+        // TODO: delay failure processing, needs better approach
+        ctx.run_after(Duration::new(5, 0), move |act, _| {
+            act.workers[msg.0].exited(msg.1, &msg.2);
+            act.update();
+        });
         Self::empty()
     }
 }

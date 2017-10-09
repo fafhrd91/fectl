@@ -343,7 +343,6 @@ impl Handler<ProcessMessage, io::Error> for Process {
                 }
             }
             ProcessMessage::Kill => {
-                println!("kill received");
                 let _ = kill(self.pid, Signal::SIGKILL);
                 ctx.stop();
                 return Self::empty()

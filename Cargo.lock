@@ -1,6 +1,6 @@
 [root]
 name = "fectl"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "actix 0.1.0 (git+https://github.com/fafhrd91/actix.git)",
  "boxfnonce 0.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -31,7 +31,7 @@ dependencies = [
 [[package]]
 name = "actix"
 version = "0.1.0"
-source = "git+https://github.com/fafhrd91/actix.git#e7877acd9b281eef5a5619ad9f29cfd1cdb610a4"
+source = "git+https://github.com/fafhrd91/actix.git#93d59c908c4dbd88650024baae81bd9a563ff755"
 dependencies = [
  "crossbeam 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
