@@ -35,7 +35,7 @@ class Worker(object):
                     CMD_PAUSE, CMD_RESUME, CMD_STOP, CMD_HEARTBEAT)
 
     SIGNALS = [getattr(signal, "SIG%s" % x)
-               for x in "ABRT HUP QUIT INT TERM USR1 USR2 WINCH CHLD".split()]
+               for x in "ABRT HUP QUIT INT TERM USR1 WINCH CHLD".split()]
 
     def __init__(self, application, ppid, args):
         self._application = application

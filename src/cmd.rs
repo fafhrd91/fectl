@@ -94,7 +94,7 @@ impl CommandCenter {
 
 pub struct ServicePids(pub String);
 
-impl ResponseType<ServicePids> for CommandCenter {
+impl ResponseType for ServicePids {
     type Item = Vec<String>;
     type Error = CommandError;
 }
@@ -122,7 +122,7 @@ impl Handler<ServicePids> for CommandCenter {
 
 pub struct Stop;
 
-impl ResponseType<Stop> for CommandCenter {
+impl ResponseType for Stop {
     type Item = bool;
     type Error = ();
 }
@@ -153,7 +153,7 @@ impl Handler<Stop> for CommandCenter {
 /// Start Service by `name`
 pub struct StartService(pub String);
 
-impl ResponseType<StartService> for CommandCenter {
+impl ResponseType for StartService {
     type Item = StartStatus;
     type Error = CommandError;
 }
@@ -187,7 +187,7 @@ impl Handler<StartService> for CommandCenter {
 /// Stop Service by `name`
 pub struct StopService(pub String, pub bool);
 
-impl ResponseType<StopService> for CommandCenter {
+impl ResponseType for StopService {
     type Item = ();
     type Error = CommandError;
 }
@@ -221,7 +221,7 @@ impl Handler<StopService> for CommandCenter {
 /// Service status message
 pub struct StatusService(pub String);
 
-impl ResponseType<StatusService> for CommandCenter {
+impl ResponseType for StatusService {
     type Item = ServiceStatus;
     type Error = CommandError;
 }
@@ -251,7 +251,7 @@ impl Handler<StatusService> for CommandCenter {
 /// Pause service message
 pub struct PauseService(pub String);
 
-impl ResponseType<PauseService> for CommandCenter {
+impl ResponseType for PauseService {
     type Item = ();
     type Error = CommandError;
 }
@@ -285,7 +285,7 @@ impl Handler<PauseService> for CommandCenter {
 /// Resume service message
 pub struct ResumeService(pub String);
 
-impl ResponseType<ResumeService> for CommandCenter {
+impl ResponseType for ResumeService {
     type Item = ();
     type Error = CommandError;
 }
@@ -319,7 +319,7 @@ impl Handler<ResumeService> for CommandCenter {
 /// Reload service
 pub struct ReloadService(pub String, pub bool);
 
-impl ResponseType<ReloadService> for CommandCenter {
+impl ResponseType for ReloadService {
     type Item = ReloadStatus;
     type Error = CommandError;
 }
@@ -354,7 +354,7 @@ impl Handler<ReloadService> for CommandCenter {
 /// reload all services
 pub struct ReloadAll;
 
-impl ResponseType<ReloadAll> for CommandCenter {
+impl ResponseType for ReloadAll {
     type Item = ();
     type Error = CommandError;
 }
@@ -374,11 +374,6 @@ impl Handler<ReloadAll> for CommandCenter {
         };
         Self::empty()
     }
-}
-
-impl ResponseType<signal::Signal> for CommandCenter {
-    type Item = ();
-    type Error = ();
 }
 
 /// Handle ProcessEvent (SIGHUP, SIGINT, etc)

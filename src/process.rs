@@ -64,6 +64,11 @@ pub enum ProcessMessage {
     Kill,
 }
 
+impl ResponseType for ProcessMessage {
+    type Item = ();
+    type Error = ();
+}
+
 #[derive(Debug, Clone)]
 pub enum ProcessError {
     /// Heartbeat failed
@@ -230,11 +235,6 @@ impl StreamHandler<ProcessMessage, io::Error> for Process {
     }
 }
 
-impl ResponseType<ProcessMessage> for Process {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<ProcessMessage, io::Error> for Process {
 
     fn error(&mut self, _: io::Error, ctx: &mut FramedContext<Self>) {
@@ -354,7 +354,7 @@ impl Handler<ProcessMessage, io::Error> for Process {
 
 pub struct SendCommand(pub WorkerCommand);
 
-impl ResponseType<SendCommand> for Process {
+impl ResponseType for SendCommand {
     type Item = ();
     type Error = ();
 }
@@ -371,7 +371,7 @@ impl Handler<SendCommand> for Process {
 
 pub struct StartProcess;
 
-impl ResponseType<StartProcess> for Process {
+impl ResponseType for StartProcess {
     type Item = ();
     type Error = ();
 }
@@ -388,7 +388,7 @@ impl Handler<StartProcess> for Process {
 
 pub struct PauseProcess;
 
-impl ResponseType<PauseProcess> for Process {
+impl ResponseType for PauseProcess {
     type Item = ();
     type Error = ();
 }
@@ -405,7 +405,7 @@ impl Handler<PauseProcess> for Process {
 
 pub struct ResumeProcess;
 
-impl ResponseType<ResumeProcess> for Process {
+impl ResponseType for ResumeProcess {
     type Item = ();
     type Error = ();
 }
@@ -422,7 +422,7 @@ impl Handler<ResumeProcess> for Process {
 
 pub struct StopProcess;
 
-impl ResponseType<StopProcess> for Process {
+impl ResponseType for StopProcess {
     type Item = ();
     type Error = ();
 }
@@ -453,7 +453,7 @@ impl Handler<StopProcess> for Process {
 
 pub struct QuitProcess(pub bool);
 
-impl ResponseType<QuitProcess> for Process {
+impl ResponseType for QuitProcess {
     type Item = ();
     type Error = ();
 }

@@ -12,6 +12,7 @@ use libc;
 use serde_json as json;
 use byteorder::{BigEndian , ByteOrder};
 use bytes::{BytesMut, BufMut};
+use futures::Stream;
 use tokio_core::reactor::Timeout;
 use tokio_uds::{UnixStream, UnixListener};
 use tokio_io::codec::{Encoder, Decoder};
@@ -35,18 +36,18 @@ impl Actor for Master {
     type Context = Context<Self>;
 }
 
-impl StreamHandler<(UnixStream, std::os::unix::net::SocketAddr), io::Error> for Master {}
+struct NetStream(UnixStream, std::os::unix::net::SocketAddr);
 
-impl ResponseType<(UnixStream, std::os::unix::net::SocketAddr)> for Master {
+impl ResponseType for NetStream {
     type Item = ();
     type Error = ();
 }
 
-impl Handler<(UnixStream, std::os::unix::net::SocketAddr), io::Error> for Master {
+impl StreamHandler<NetStream, io::Error> for Master {}
 
-    fn handle(&mut self,
-              msg: (UnixStream, std::os::unix::net::SocketAddr), _: &mut Context<Self>)
-              -> Response<Self, (UnixStream, std::os::unix::net::SocketAddr)>
+impl Handler<NetStream, io::Error> for Master {
+
+    fn handle(&mut self, msg: NetStream, _: &mut Context<Self>) -> Response<Self, NetStream>
     {
         let cmd = self.cmd.clone();
         let _: () = MasterClient{cmd: cmd}.framed(msg.0, MasterTransportCodec);
@@ -65,12 +66,7 @@ struct MasterClient {
 }
 
 impl Actor for MasterClient {
-
     type Context = FramedContext<Self>;
-
-    fn started(&mut self, ctx: &mut FramedContext<Self>) {
-        self.hb(ctx);
-    }
 }
 
 impl FramedActor for MasterClient {
@@ -184,6 +180,11 @@ impl MasterClient {
     }
 }
 
+impl ResponseType for MasterRequest {
+    type Item = ();
+    type Error = ();
+}
+
 impl StreamHandler<MasterRequest, io::Error> for MasterClient {
 
     fn started(&mut self, ctx: &mut FramedContext<Self>) {
@@ -193,11 +194,6 @@ impl StreamHandler<MasterRequest, io::Error> for MasterClient {
     fn finished(&mut self, ctx: &mut FramedContext<Self>) {
         ctx.stop()
     }
-}
-
-impl ResponseType<MasterRequest> for MasterClient {
-    type Item = ();
-    type Error = ();
 }
 
 impl Handler<MasterRequest, io::Error> for MasterClient {
@@ -489,7 +485,7 @@ pub fn start(cfg: Config) -> bool {
 
     // start uds master server
     let _: () = Master::create(|ctx| {
-        ctx.add_stream(lst.incoming());
+        ctx.add_stream(lst.incoming().map(|(s, a)| NetStream(s, a)));
         Master{cfg: cfg, cmd: cmd}}
     );
 

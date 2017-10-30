@@ -47,7 +47,7 @@ mod version {
 }
 
 fn main() {
-    let sys = actix::System::new("fectl".to_owned());
+    let sys = actix::System::new("fectl");
     let loaded = match config::load_config() {
         Some(cfg) => master::start(cfg),
         None => false,

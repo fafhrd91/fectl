@@ -211,7 +211,7 @@ impl Actor for FeService {
 
 pub struct ProcessMessage(pub usize, pub Pid, pub WorkerMessage);
 
-impl ResponseType<ProcessMessage> for FeService {
+impl ResponseType for ProcessMessage {
     type Item = ();
     type Error = ();
 }
@@ -229,7 +229,7 @@ impl Handler<ProcessMessage> for FeService {
 
 pub struct ProcessFailed(pub usize, pub Pid, pub ProcessError);
 
-impl ResponseType<ProcessFailed> for FeService {
+impl ResponseType for ProcessFailed {
     type Item = ();
     type Error = ();
 }
@@ -250,7 +250,7 @@ impl Handler<ProcessFailed> for FeService {
 
 pub struct ProcessLoaded(pub usize, pub Pid);
 
-impl ResponseType<ProcessLoaded> for FeService {
+impl ResponseType for ProcessLoaded {
     type Item = ();
     type Error = ();
 }
@@ -268,7 +268,7 @@ impl Handler<ProcessLoaded> for FeService {
 
 pub struct ProcessExited(pub Pid, pub ProcessError);
 
-impl ResponseType<ProcessExited> for FeService {
+impl ResponseType for ProcessExited {
     type Item = ();
     type Error = ();
 }
@@ -289,7 +289,7 @@ impl Handler<ProcessExited> for FeService {
 /// Service status command
 pub struct Pids;
 
-impl ResponseType<Pids> for FeService {
+impl ResponseType for Pids {
     type Item = Vec<String>;
     type Error = ();
 }
@@ -311,7 +311,7 @@ impl Handler<Pids> for FeService {
 /// Service status command
 pub struct Status;
 
-impl ResponseType<Status> for FeService {
+impl ResponseType for Status {
     type Item = (String, Vec<(String, Vec<Event>)>);
     type Error = ();
 }
@@ -337,7 +337,7 @@ impl Handler<Status> for FeService {
 /// Start service command
 pub struct Start;
 
-impl ResponseType<Start> for FeService {
+impl ResponseType for Start {
     type Item = StartStatus;
     type Error = ServiceOperationError;
 }
@@ -375,7 +375,7 @@ impl Handler<Start> for FeService {
 /// Pause service command
 pub struct Pause;
 
-impl ResponseType<Pause> for FeService {
+impl ResponseType for Pause {
     type Item = ();
     type Error = ServiceOperationError;
 }
@@ -401,7 +401,7 @@ impl Handler<Pause> for FeService {
 /// Resume service command
 pub struct Resume;
 
-impl ResponseType<Resume> for FeService {
+impl ResponseType for Resume {
     type Item = ();
     type Error = ServiceOperationError;
 }
@@ -427,7 +427,7 @@ impl Handler<Resume> for FeService {
 /// Reload service
 pub struct Reload(pub bool);
 
-impl ResponseType<Reload> for FeService {
+impl ResponseType for Reload {
     type Item = ReloadStatus;
     type Error = ServiceOperationError;
 }
@@ -465,7 +465,7 @@ impl Handler<Reload> for FeService {
 /// Stop service command
 pub struct Stop(pub bool, pub Reason);
 
-impl ResponseType<Stop> for FeService {
+impl ResponseType for Stop {
     type Item = ();
     type Error = ();
 }
