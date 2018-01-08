@@ -40,11 +40,25 @@ pub struct Process {
 
 impl Actor for Process {
     type Context = FramedContext<Self>;
+
+    fn stopping(&mut self, ctx: &mut FramedContext<Self>) -> bool {
+        self.kill(ctx, false);
+        true
+    }
 }
 
 impl FramedActor for Process {
     type Io = PipeFile;
     type Codec = TransportCodec;
+
+    fn handle(&mut self, msg: io::Result<ProcessMessage>, ctx: &mut Self::Context) {
+        match msg {
+            Err(_) => self.kill(ctx, false),
+            Ok(msg) => {
+                ctx.notify(msg);
+            },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -55,18 +69,13 @@ enum ProcessState {
     Stopping,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Message)]
 pub enum ProcessMessage {
     Message(WorkerMessage),
     StartupTimeout,
     StopTimeout,
     Heartbeat,
     Kill,
-}
-
-impl ResponseType for ProcessMessage {
-    type Item = ();
-    type Error = ();
 }
 
 #[derive(Debug, Clone)]
@@ -148,8 +157,8 @@ impl Process {
         // start Process service
         let addr = Process::create_framed(
             pipe, TransportCodec, move |ctx| {
-                ctx.notify(ProcessMessage::StartupTimeout,
-                           Duration::new(startup_timeout as u64, 0));
+                ctx.notify_later(ProcessMessage::StartupTimeout,
+                                 Duration::new(startup_timeout as u64, 0));
                 Process {
                     idx: idx,
                     pid: pid,
@@ -214,7 +223,7 @@ impl Process {
 
     fn kill(&self, ctx: &mut FramedContext<Self>, graceful: bool) {
         if graceful {
-            ctx.notify(ProcessMessage::Kill, Duration::new(1, 0));
+            ctx.notify_later(ProcessMessage::Kill, Duration::new(1, 0));
         } else {
             let _ = kill(self.pid, Signal::SIGKILL);
             ctx.terminate();
@@ -228,22 +237,10 @@ impl Drop for Process {
     }
 }
 
-impl StreamHandler<ProcessMessage, io::Error> for Process {
+impl Handler<ProcessMessage> for Process {
+    type Result = ();
 
-    fn finished(&mut self, ctx: &mut FramedContext<Self>) {
-        self.kill(ctx, false);
-    }
-}
-
-impl Handler<ProcessMessage, io::Error> for Process {
-
-    fn error(&mut self, _: io::Error, ctx: &mut FramedContext<Self>) {
-        self.kill(ctx, false)
-    }
-
-    fn handle(&mut self, msg: ProcessMessage, ctx: &mut FramedContext<Self>)
-              -> Response<Self, ProcessMessage>
-    {
+    fn handle(&mut self, msg: ProcessMessage, ctx: &mut FramedContext<Self>) {
         match msg {
             ProcessMessage::Message(msg) => match msg {
                 WorkerMessage::forked => {
@@ -260,8 +257,8 @@ impl Handler<ProcessMessage, io::Error> for Process {
                             // start heartbeat timer
                             self.state = ProcessState::Running;
                             self.hb = Instant::now();
-                            ctx.notify(ProcessMessage::Heartbeat,
-                                       Duration::new(HEARTBEAT, 0));
+                            ctx.notify_later(
+                                ProcessMessage::Heartbeat, Duration::new(HEARTBEAT, 0));
                         },
                         _ => {
                             warn!("Received `loaded` message from worker (pid:{})", self.pid);
@@ -303,7 +300,7 @@ impl Handler<ProcessMessage, io::Error> for Process {
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
                         ctx.stop();
-                        return Self::empty()
+                        return
                     },
                     _ => ()
                 }
@@ -319,7 +316,7 @@ impl Handler<ProcessMessage, io::Error> for Process {
                         self.state = ProcessState::Failed;
                         let _ = kill(self.pid, Signal::SIGKILL);
                         ctx.stop();
-                        return Self::empty()
+                        return
                     },
                     _ => ()
                 }
@@ -337,7 +334,7 @@ impl Handler<ProcessMessage, io::Error> for Process {
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
                         let _ = ctx.send(WorkerCommand::hb);
-                        ctx.notify(
+                        ctx.notify_later(
                             ProcessMessage::Heartbeat, Duration::new(HEARTBEAT, 0));
                     }
                 }
@@ -345,92 +342,63 @@ impl Handler<ProcessMessage, io::Error> for Process {
             ProcessMessage::Kill => {
                 let _ = kill(self.pid, Signal::SIGKILL);
                 ctx.stop();
-                return Self::empty()
+                return
             }
         }
-        Self::empty()
     }
 }
 
+#[derive(Message)]
 pub struct SendCommand(pub WorkerCommand);
 
-impl ResponseType for SendCommand {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<SendCommand> for Process {
+    type Result = ();
 
-    fn handle(&mut self, msg: SendCommand, ctx: &mut FramedContext<Process>)
-              -> Response<Self, SendCommand>
-    {
+    fn handle(&mut self, msg: SendCommand, ctx: &mut FramedContext<Process>) {
         let _ = ctx.send(msg.0);
-        Self::empty()
     }
 }
 
+#[derive(Message)]
 pub struct StartProcess;
 
-impl ResponseType for StartProcess {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<StartProcess> for Process {
+    type Result = ();
 
-    fn handle(&mut self, _: StartProcess, ctx: &mut FramedContext<Process>)
-              -> Response<Self, StartProcess>
-    {
+    fn handle(&mut self, _: StartProcess, ctx: &mut FramedContext<Process>) {
         let _ = ctx.send(WorkerCommand::start);
-        Self::empty()
     }
 }
 
+#[derive(Message)]
 pub struct PauseProcess;
 
-impl ResponseType for PauseProcess {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<PauseProcess> for Process {
+    type Result = ();
 
-    fn handle(&mut self, _: PauseProcess, ctx: &mut FramedContext<Process>)
-              -> Response<Self, PauseProcess>
-    {
+    fn handle(&mut self, _: PauseProcess, ctx: &mut FramedContext<Process>) {
         let _ = ctx.send(WorkerCommand::pause);
-        Self::empty()
     }
 }
 
+#[derive(Message)]
 pub struct ResumeProcess;
 
-impl ResponseType for ResumeProcess {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<ResumeProcess> for Process {
+    type Result = ();
 
-    fn handle(&mut self, _: ResumeProcess, ctx: &mut FramedContext<Process>)
-              -> Response<Self, ResumeProcess>
-    {
+    fn handle(&mut self, _: ResumeProcess, ctx: &mut FramedContext<Process>) {
         let _ = ctx.send(WorkerCommand::resume);
-        Self::empty()
     }
 }
 
+#[derive(Message)]
 pub struct StopProcess;
 
-impl ResponseType for StopProcess {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<StopProcess> for Process {
+    type Result = ();
 
     fn handle(&mut self, _: StopProcess, ctx: &mut FramedContext<Process>)
-              -> Response<Self, StopProcess>
     {
         info!("Stopping worker: (pid:{})", self.pid);
         match self.state {
@@ -438,8 +406,9 @@ impl Handler<StopProcess> for Process {
                 self.state = ProcessState::Stopping;
 
                 let _ = ctx.send(WorkerCommand::stop);
-                ctx.notify(ProcessMessage::StopTimeout,
-                           Duration::new(self.shutdown_timeout, 0));
+                ctx.notify_later(
+                    ProcessMessage::StopTimeout,
+                    Duration::new(self.shutdown_timeout, 0));
                 let _ = kill(self.pid, Signal::SIGTERM);
             },
             _ => {
@@ -447,22 +416,16 @@ impl Handler<StopProcess> for Process {
                 ctx.terminate();
             }
         }
-        Self::empty()
     }
 }
 
+#[derive(Message)]
 pub struct QuitProcess(pub bool);
 
-impl ResponseType for QuitProcess {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<QuitProcess> for Process {
+    type Result = ();
 
-    fn handle(&mut self, msg: QuitProcess, ctx: &mut FramedContext<Process>)
-              -> Response<Self, QuitProcess>
-    {
+    fn handle(&mut self, msg: QuitProcess, ctx: &mut FramedContext<Process>) {
         if msg.0 {
             let _ = kill(self.pid, Signal::SIGQUIT);
             self.kill(ctx, true);
@@ -471,7 +434,6 @@ impl Handler<QuitProcess> for Process {
             let _ = kill(self.pid, Signal::SIGKILL);
             ctx.terminate();
         }
-        Self::empty()
     }
 }
 

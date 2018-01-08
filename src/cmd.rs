@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use nix::unistd::getpid;
 use nix::sys::wait::{waitpid, WaitStatus, WNOHANG};
 
+use actix::Response;
 use actix::prelude::*;
 use actix::actors::signal;
 
@@ -61,9 +62,9 @@ impl CommandCenter {
         }
 
         if success {
-            self.system.send(msgs::SystemExit(0));
+            self.system.send(actix::msgs::SystemExit(0));
         } else {
-            self.system.send(msgs::SystemExit(0));
+            self.system.send(actix::msgs::SystemExit(0));
         }
     }
 
@@ -82,8 +83,8 @@ impl CommandCenter {
                         srv.exit(true);
                     }
                     match res {
-                        Ok(_) => fut::ok(()),
-                        Err(_) => fut::err(()),
+                        Ok(_) => actix::fut::ok(()),
+                        Err(_) => actix::fut::err(()),
                     }
                 }).spawn(ctx);
             };
@@ -100,22 +101,21 @@ impl ResponseType for ServicePids {
 }
 
 impl Handler<ServicePids> for CommandCenter {
+    type Result = Response<Self, ServicePids>;
 
-    fn handle(&mut self, msg: ServicePids,
-              _: &mut Context<CommandCenter>) -> Response<Self, ServicePids>
-    {
+    fn handle(&mut self, msg: ServicePids, _: &mut Context<CommandCenter>) -> Self::Result {
         match self.state {
             State::Running => {
                 match self.services.get(&msg.0) {
                     Some(service) =>
                         service.call(self, service::Pids).then(|res, _, _| match res {
-                            Ok(Ok(status)) => fut::ok(status),
-                            _ => fut::err(CommandError::UnknownService)
+                            Ok(Ok(status)) => actix::fut::ok(status),
+                            _ => actix::fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Self::reply_error(CommandError::UnknownService)
+                    None => Self::reply(Err(CommandError::UnknownService))
                 }
             }
-            _ => Self::reply_error(CommandError::NotReady)
+            _ => Self::reply(Err(CommandError::NotReady))
         }
     }
 }
@@ -128,9 +128,9 @@ impl ResponseType for Stop {
 }
 
 impl Handler<Stop> for CommandCenter {
+    type Result = Response<Self, Stop>;
 
-    fn handle(&mut self, _: Stop, ctx: &mut Context<Self>) -> Response<Self, Stop>
-    {
+    fn handle(&mut self, _: Stop, ctx: &mut Context<Self>) -> Self::Result {
         self.stop(ctx, true);
 
         if self.stop_waiter.is_none() {
@@ -140,8 +140,8 @@ impl Handler<Stop> for CommandCenter {
         if let Some(ref mut waiter) = self.stop_waiter {
             return
                 waiter.wait().actfuture().then(|res, _, _| match res {
-                    Ok(res) => fut::result(Ok(res)),
-                    Err(_) => fut::result(Err(())),
+                    Ok(res) => actix::fut::result(Ok(res)),
+                    Err(_) => actix::fut::result(Err(())),
                 }).into()
         } else {
             unreachable!();
@@ -159,26 +159,25 @@ impl ResponseType for StartService {
 }
 
 impl Handler<StartService> for CommandCenter {
+    type Result = Response<Self, StartService>;
 
-    fn handle(&mut self, msg: StartService,
-              _: &mut Context<CommandCenter>) -> Response<Self, StartService>
-    {
+    fn handle(&mut self, msg: StartService, _: &mut Context<CommandCenter>) -> Self::Result {
         match self.state {
             State::Running => {
                 info!("Starting service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
                         service.call(self, service::Start).then(|res, _, _| match res {
-                                Ok(Ok(status)) => fut::ok(status),
-                                Ok(Err(err)) => fut::err(CommandError::Service(err)),
-                                Err(_) => fut::err(CommandError::NotReady)
-                            }).into(),
-                    None => Self::reply_error(CommandError::UnknownService)
+                            Ok(Ok(status)) => actix::fut::ok(status),
+                            Ok(Err(err)) => actix::fut::err(CommandError::Service(err)),
+                            Err(_) => actix::fut::err(CommandError::NotReady)
+                        }).into(),
+                    None => Self::reply(Err(CommandError::UnknownService))
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Self::reply_error(CommandError::NotReady)
+                Self::reply(Err(CommandError::NotReady))
             }
         }
     }
@@ -193,10 +192,9 @@ impl ResponseType for StopService {
 }
 
 impl Handler<StopService> for CommandCenter {
+    type Result = Response<Self, StopService>;
 
-    fn handle(&mut self, msg: StopService,
-              _: &mut Context<CommandCenter>) -> Response<Self, StopService>
-    {
+    fn handle(&mut self, msg: StopService, _: &mut Context<CommandCenter>) -> Self::Result {
         match self.state {
             State::Running => {
                 info!("Stopping service {:?}", msg.0);
@@ -204,15 +202,15 @@ impl Handler<StopService> for CommandCenter {
                     Some(service) =>
                         service.call(self, service::Stop(msg.1, Reason::ConsoleRequest))
                             .then(|res, _, _| match res {
-                                Ok(Ok(_)) => fut::ok(()),
-                                _ => fut::err(CommandError::ServiceStopped),
+                                Ok(Ok(_)) => actix::fut::ok(()),
+                                _ => actix::fut::err(CommandError::ServiceStopped),
                             }).into(),
-                    None => Self::reply_error(CommandError::UnknownService)
+                    None => Self::reply(Err(CommandError::UnknownService))
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Self::reply_error(CommandError::NotReady)
+                Self::reply(Err(CommandError::NotReady))
             }
         }
     }
@@ -227,22 +225,21 @@ impl ResponseType for StatusService {
 }
 
 impl Handler<StatusService> for CommandCenter {
+    type Result = Response<Self, StatusService>;
 
-    fn handle(&mut self, msg: StatusService,
-              _: &mut Context<CommandCenter>) -> Response<Self, StatusService>
-    {
+    fn handle(&mut self, msg: StatusService, _: &mut Context<CommandCenter>) -> Self::Result {
         match self.state {
             State::Running => {
                 match self.services.get(&msg.0) {
                     Some(service) =>
                         service.call(self, service::Status).then(|res, _, _| match res {
-                            Ok(Ok(status)) => fut::ok(status),
-                            _ => fut::err(CommandError::UnknownService)
+                            Ok(Ok(status)) => actix::fut::ok(status),
+                            _ => actix::fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Self::reply_error(CommandError::UnknownService),
+                    None => Self::reply(Err(CommandError::UnknownService)),
                 }
             }
-            _ => Self::reply_error(CommandError::NotReady)
+            _ => Self::reply(Err(CommandError::NotReady))
         }
     }
 }
@@ -257,26 +254,26 @@ impl ResponseType for PauseService {
 }
 
 impl Handler<PauseService> for CommandCenter {
+    type Result = Response<Self, PauseService>;
 
     fn handle(&mut self, msg: PauseService,
-              _: &mut Context<CommandCenter>) -> Response<Self, PauseService>
-    {
+              _: &mut Context<CommandCenter>) -> Self::Result {
         match self.state {
             State::Running => {
                 info!("Pause service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
                         service.call(self, service::Pause).then(|res, _, _| match res {
-                            Ok(Ok(_)) => fut::ok(()),
-                            Ok(Err(err)) => fut::err(CommandError::Service(err)),
-                            Err(_) => fut::err(CommandError::UnknownService)
+                            Ok(Ok(_)) => actix::fut::ok(()),
+                            Ok(Err(err)) => actix::fut::err(CommandError::Service(err)),
+                            Err(_) => actix::fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Self::reply_error(CommandError::UnknownService)
+                    None => Self::reply(Err(CommandError::UnknownService))
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Self::reply_error(CommandError::NotReady)
+                Self::reply(Err(CommandError::NotReady))
             }
         }
     }
@@ -291,26 +288,25 @@ impl ResponseType for ResumeService {
 }
 
 impl Handler<ResumeService> for CommandCenter {
+    type Result = Response<Self, ResumeService>;
 
-    fn handle(&mut self, msg: ResumeService,
-              _: &mut Context<CommandCenter>) -> Response<Self, ResumeService>
-    {
+    fn handle(&mut self, msg: ResumeService, _: &mut Context<CommandCenter>) -> Self::Result {
         match self.state {
             State::Running => {
                 info!("Resume service {:?}", msg.0);
                 match self.services.get(&msg.0) {
                     Some(service) =>
                         service.call(self, service::Resume).then(|res, _, _| match res {
-                            Ok(Ok(_)) => fut::ok(()),
-                            Ok(Err(err)) => fut::err(CommandError::Service(err)),
-                            Err(_) => fut::err(CommandError::UnknownService)
+                            Ok(Ok(_)) => actix::fut::ok(()),
+                            Ok(Err(err)) => actix::fut::err(CommandError::Service(err)),
+                            Err(_) => actix::fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Self::reply_error(CommandError::UnknownService)
+                    None => Self::reply(Err(CommandError::UnknownService))
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Self::reply_error(CommandError::NotReady)
+                Self::reply(Err(CommandError::NotReady))
             }
         }
     }
@@ -325,10 +321,9 @@ impl ResponseType for ReloadService {
 }
 
 impl Handler<ReloadService> for CommandCenter {
+    type Result = Response<Self, ReloadService>;
 
-    fn handle(&mut self, msg: ReloadService, _: &mut Context<Self>)
-              -> Response<Self, ReloadService>
-    {
+    fn handle(&mut self, msg: ReloadService, _: &mut Context<Self>) -> Self::Result {
         match self.state {
             State::Running => {
                 info!("Reloading service {:?}", msg.0);
@@ -336,16 +331,16 @@ impl Handler<ReloadService> for CommandCenter {
                 match self.services.get(&msg.0) {
                     Some(service) =>
                         service.call(self, service::Reload(graceful)).then(|res, _, _| match res {
-                            Ok(Ok(status)) => fut::ok(status),
-                            Ok(Err(err)) => fut::err(CommandError::Service(err)),
-                            Err(_) => fut::err(CommandError::UnknownService)
+                            Ok(Ok(status)) => actix::fut::ok(status),
+                            Ok(Err(err)) => actix::fut::err(CommandError::Service(err)),
+                            Err(_) => actix::fut::err(CommandError::UnknownService)
                         }).into(),
-                    None => Self::reply_error(CommandError::UnknownService)
+                    None => Self::reply(Err(CommandError::UnknownService))
                 }
             }
             _ => {
                 warn!("Can not reload in system in `{:?}` state", self.state);
-                Self::reply_error(CommandError::NotReady)
+                Self::reply(Err(CommandError::NotReady))
             }
         }
     }
@@ -360,9 +355,9 @@ impl ResponseType for ReloadAll {
 }
 
 impl Handler<ReloadAll> for CommandCenter {
+    type Result = MessageResult<ReloadAll>;
 
-    fn handle(&mut self, _: ReloadAll, _: &mut Context<Self>) -> Response<Self, ReloadAll>
-    {
+    fn handle(&mut self, _: ReloadAll, _: &mut Context<Self>) -> Self::Result {
         match self.state {
             State::Running => {
                 info!("reloading all services");
@@ -371,17 +366,16 @@ impl Handler<ReloadAll> for CommandCenter {
                 }
             }
             _ => warn!("Can not reload in system in `{:?}` state", self.state)
-        };
-        Self::empty()
+        }
+        Ok(())
     }
 }
 
 /// Handle ProcessEvent (SIGHUP, SIGINT, etc)
 impl Handler<signal::Signal> for CommandCenter {
+    type Result = ();
 
-    fn handle(&mut self, msg: signal::Signal, ctx: &mut Context<Self>)
-              -> Response<Self, signal::Signal>
-    {
+    fn handle(&mut self, msg: signal::Signal, ctx: &mut Context<Self>) {
         match msg.0 {
             signal::SignalType::Int => {
                 info!("SIGINT received, exiting");
@@ -430,8 +424,7 @@ impl Handler<signal::Signal> for CommandCenter {
                     break
                 }
             }
-        };
-        Self::empty()
+        }
     }
 }
 
@@ -455,8 +448,8 @@ impl Actor for CommandCenter {
         self.state = State::Running;
     }
 
-    fn stopping(&mut self, _: &mut Context<Self>)
-    {
+    fn stopping(&mut self, _: &mut Context<Self>) -> bool {
         self.exit(true);
+        true
     }
 }

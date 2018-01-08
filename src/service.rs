@@ -5,6 +5,7 @@ use std::time::Duration;
 use nix::unistd::Pid;
 
 use actix::prelude::*;
+use actix::Response;
 
 use event::{Event, Reason};
 use config::ServiceConfig;
@@ -209,80 +210,56 @@ impl Actor for FeService {
     }
 }
 
+#[derive(Message)]
 pub struct ProcessMessage(pub usize, pub Pid, pub WorkerMessage);
 
-impl ResponseType for ProcessMessage {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<ProcessMessage> for FeService {
+    type Result = ();
 
-    fn handle(&mut self, msg: ProcessMessage, _: &mut Context<Self>)
-              -> Response<Self, ProcessMessage>
-    {
+    fn handle(&mut self, msg: ProcessMessage, _: &mut Context<Self>) {
         self.workers[msg.0].message(msg.1, &msg.2);
         self.update();
-        Self::empty()
     }
 }
 
+#[derive(Message)]
 pub struct ProcessFailed(pub usize, pub Pid, pub ProcessError);
 
-impl ResponseType for ProcessFailed {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<ProcessFailed> for FeService {
+    type Result = ();
 
-    fn handle(&mut self, msg: ProcessFailed, ctx: &mut Context<Self>)
-              -> Response<Self, ProcessFailed>
-    {
+    fn handle(&mut self, msg: ProcessFailed, ctx: &mut Context<Self>) {
         // TODO: delay failure processing, needs better approach
         ctx.run_later(Duration::new(5, 0), move |act, _| {
             act.workers[msg.0].exited(msg.1, &msg.2);
             act.update();
         });
-        Self::empty()
     }
 }
 
+#[derive(Message)]
 pub struct ProcessLoaded(pub usize, pub Pid);
 
-impl ResponseType for ProcessLoaded {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<ProcessLoaded> for FeService {
+    type Result = ();
 
-    fn handle(&mut self, msg: ProcessLoaded, _: &mut Context<Self>)
-              -> Response<Self, ProcessLoaded>
-    {
+    fn handle(&mut self, msg: ProcessLoaded, _: &mut Context<Self>) {
         self.workers[msg.0].loaded(msg.1);
         self.update();
-        Self::empty()
     }
 }
 
+#[derive(Message)]
 pub struct ProcessExited(pub Pid, pub ProcessError);
 
-impl ResponseType for ProcessExited {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<ProcessExited> for FeService {
+    type Result = ();
 
-    fn handle(&mut self, msg: ProcessExited, _: &mut Context<Self>)
-              -> Response<Self, ProcessExited>
-    {
+    fn handle(&mut self, msg: ProcessExited, _: &mut Context<Self>) {
         for worker in self.workers.iter_mut() {
             worker.exited(msg.0, &msg.1);
         }
         self.update();
-        Self::empty()
     }
 }
 
@@ -295,16 +272,16 @@ impl ResponseType for Pids {
 }
 
 impl Handler<Pids> for FeService {
+    type Result = MessageResult<Pids>;
 
-    fn handle(&mut self, _: Pids, _: &mut Context<Self>) -> Response<Self, Pids>
-    {
+    fn handle(&mut self, _: Pids, _: &mut Context<Self>) -> Self::Result {
         let mut pids = Vec::new();
         for worker in self.workers.iter() {
             if let Some(pid) = worker.pid() {
                 pids.push(format!("{}", pid));
             }
         }
-        Self::reply(pids)
+        Ok(pids)
     }
 }
 
@@ -317,9 +294,9 @@ impl ResponseType for Status {
 }
 
 impl Handler<Status> for FeService {
+    type Result = Result<(String, Vec<(String, Vec<Event>)>), ()>;
 
-    fn handle(&mut self, _: Status, _: &mut Context<Self>) -> Response<Self, Status>
-    {
+    fn handle(&mut self, _: Status, _: &mut Context<Self>) -> Self::Result {
         let mut events: Vec<(String, Vec<Event>)> = Vec::new();
         for worker in self.workers.iter() {
             events.push(
@@ -330,7 +307,7 @@ impl Handler<Status> for FeService {
             ServiceState::Running => if self.paused { "paused" } else { "running" }
             _ => self.state.description()
         };
-        Self::reply((status.to_owned(), events))
+        Ok((status.to_owned(), events))
     }
 }
 
@@ -343,14 +320,15 @@ impl ResponseType for Start {
 }
 
 impl Handler<Start> for FeService {
+    type Result = Response<Self, Start>;
 
-    fn handle(&mut self, _: Start, _: &mut Context<Self>) -> Response<Self, Start>
+    fn handle(&mut self, _: Start, _: &mut Context<Self>) -> Self::Result
     {
         match self.state {
             ServiceState::Starting(ref mut task) => {
                 task.wait().actfuture().then(|res, _, _| match res {
-                    Ok(res) => fut::result(Ok(res)),
-                    Err(_) => fut::result(Err(ServiceOperationError::Failed)),
+                    Ok(res) => actix::fut::result(Ok(res)),
+                    Err(_) => actix::fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
             }
             ServiceState::Failed | ServiceState::Stopped => {
@@ -363,11 +341,11 @@ impl Handler<Start> for FeService {
                     worker.start(Reason::ConsoleRequest);
                 }
                 rx.actfuture().then(|res, _, _| match res {
-                    Ok(res) => fut::result(Ok(res)),
-                    Err(_) => fut::result(Err(ServiceOperationError::Failed)),
+                    Ok(res) => actix::fut::result(Ok(res)),
+                    Err(_) => actix::fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
             }
-            _ => Self::reply_error(self.state.error())
+            _ => Self::reply(Err(self.state.error()))
         }
     }
 }
@@ -381,8 +359,9 @@ impl ResponseType for Pause {
 }
 
 impl Handler<Pause> for FeService {
+    type Result = Result<(), ServiceOperationError>;
 
-    fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> Response<Self, Pause>
+    fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> Self::Result
     {
         match self.state {
             ServiceState::Running => {
@@ -391,9 +370,9 @@ impl Handler<Pause> for FeService {
                     worker.pause(Reason::ConsoleRequest);
                 }
                 self.paused = true;
-                Self::empty()
+                Ok(())
             }
-            _ => Self::reply_error(self.state.error())
+            _ => Err(self.state.error())
         }
     }
 }
@@ -407,9 +386,9 @@ impl ResponseType for Resume {
 }
 
 impl Handler<Resume> for FeService {
+    type Result = Result<(), ServiceOperationError>;
 
-    fn handle(&mut self, _: Resume, _: &mut Context<Self>) -> Response<Self, Resume>
-    {
+    fn handle(&mut self, _: Resume, _: &mut Context<Self>) -> Self::Result {
         match self.state {
             ServiceState::Running => {
                 debug!("Resume service: {:?}", self.name);
@@ -417,9 +396,9 @@ impl Handler<Resume> for FeService {
                     worker.resume(Reason::ConsoleRequest);
                 }
                 self.paused = false;
-                Self::empty()
+                Ok(())
             }
-            _ => Self::reply_error(self.state.error())
+            _ => Err(self.state.error())
         }
     }
 }
@@ -433,14 +412,14 @@ impl ResponseType for Reload {
 }
 
 impl Handler<Reload> for FeService {
+    type Result = Response<Self, Reload>;
 
-    fn handle(&mut self, msg: Reload, _: &mut Context<Self>) -> Response<Self, Reload>
-    {
+    fn handle(&mut self, msg: Reload, _: &mut Context<Self>) -> Self::Result {
         match self.state {
             ServiceState::Reloading(ref mut task) => {
                 task.wait().actfuture().then(|res, _, _| match res {
-                    Ok(res) => fut::result(Ok(res)),
-                    Err(_) => fut::result(Err(ServiceOperationError::Failed)),
+                    Ok(res) => actix::fut::result(Ok(res)),
+                    Err(_) => actix::fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
             }
             ServiceState::Running | ServiceState::Failed | ServiceState::Stopped => {
@@ -453,41 +432,37 @@ impl Handler<Reload> for FeService {
                     worker.reload(msg.0, Reason::ConsoleRequest);
                 }
                 rx.actfuture().then(|res, _, _| match res {
-                    Ok(res) => fut::result(Ok(res)),
-                    Err(_) => fut::result(Err(ServiceOperationError::Failed)),
+                    Ok(res) => actix::fut::result(Ok(res)),
+                    Err(_) => actix::fut::result(Err(ServiceOperationError::Failed)),
                 }).into()
             }
-            _ => Self::reply_error(self.state.error())
+            _ => Self::reply(Err(self.state.error()))
         }
     }
 }
 
 /// Stop service command
+#[derive(Message)]
 pub struct Stop(pub bool, pub Reason);
 
-impl ResponseType for Stop {
-    type Item = ();
-    type Error = ();
-}
-
 impl Handler<Stop> for FeService {
+    type Result = Response<Self, Stop>;
 
-    fn handle(&mut self, msg: Stop, _: &mut Context<Self>) -> Response<Self, Stop>
-    {
+    fn handle(&mut self, msg: Stop, _: &mut Context<Self>) -> Self::Result {
         let state = std::mem::replace(&mut self.state, ServiceState::Stopped);
 
         match state {
             ServiceState::Failed | ServiceState::Stopped => {
                 self.state = state;
-                return Self::reply_error(())
+                return Self::reply(Err(()))
             },
             ServiceState::Stopping(mut task) => {
                 let rx = task.wait();
                 self.state = ServiceState::Stopping(task);
                 return
                     rx.actfuture().then(|res, _, _| match res {
-                        Ok(_) => fut::ok(()),
-                        Err(_) => fut::err(()),
+                        Ok(_) => actix::fut::ok(()),
+                        Err(_) => actix::fut::err(()),
                     }).into();
             },
             ServiceState::Starting(task) => {
@@ -514,8 +489,8 @@ impl Handler<Stop> for FeService {
         self.update();
 
         rx.actfuture().then(|res, _, _| match res {
-            Ok(_) => fut::ok(()),
-            Err(_) => fut::err(()),
+            Ok(_) => actix::fut::ok(()),
+            Err(_) => actix::fut::err(()),
         }).into()
     }
 }

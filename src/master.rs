@@ -36,22 +36,17 @@ impl Actor for Master {
     type Context = Context<Self>;
 }
 
+#[derive(Message)]
 struct NetStream(UnixStream, std::os::unix::net::SocketAddr);
 
-impl ResponseType for NetStream {
-    type Item = ();
-    type Error = ();
-}
+impl Handler<io::Result<NetStream>> for Master {
+    type Result = ();
 
-impl StreamHandler<NetStream, io::Error> for Master {}
-
-impl Handler<NetStream, io::Error> for Master {
-
-    fn handle(&mut self, msg: NetStream, _: &mut Context<Self>) -> Response<Self, NetStream>
-    {
-        let cmd = self.cmd.clone();
-        let _: () = MasterClient{cmd: cmd}.framed(msg.0, MasterTransportCodec);
-        Self::empty()
+    fn handle(&mut self, msg: io::Result<NetStream>, _: &mut Context<Self>) {
+        if let Ok(msg) = msg {
+            let cmd = self.cmd.clone();
+            let _: () = MasterClient{cmd: cmd}.framed(msg.0, MasterTransportCodec);
+        }
     }
 }
 
@@ -67,11 +62,21 @@ struct MasterClient {
 
 impl Actor for MasterClient {
     type Context = FramedContext<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        self.hb(ctx);
+    }
 }
 
 impl FramedActor for MasterClient {
     type Io = UnixStream;
     type Codec= MasterTransportCodec;
+
+    fn handle(&mut self, msg: io::Result<MasterRequest>, ctx: &mut Self::Context) {
+        if let Ok(msg) = msg {
+            ctx.notify(msg);
+        }
+    }
 }
 
 impl MasterClient {
@@ -84,7 +89,7 @@ impl MasterClient {
                 if let Ok(_) = ctx.send(MasterResponse::Pong) {
                     act.hb(ctx);
                 }
-                fut::ok(())
+                actix::fut::ok(())
             });
         ctx.spawn(fut);
     }
@@ -130,7 +135,7 @@ impl MasterClient {
                     let _ = ctx.send(MasterResponse::ServiceStopped);
                 }
             };
-            fut::ok(())
+            actix::fut::ok(())
         }).spawn(ctx);
     }
 
@@ -153,7 +158,7 @@ impl MasterClient {
                     };
                 }
             }
-            fut::ok(())
+            actix::fut::ok(())
         }).spawn(ctx);
     }
 
@@ -175,7 +180,7 @@ impl MasterClient {
                     };
                 }
             }
-            fut::ok(())
+            actix::fut::ok(())
         }).spawn(ctx);
     }
 }
@@ -185,26 +190,10 @@ impl ResponseType for MasterRequest {
     type Error = ();
 }
 
-impl StreamHandler<MasterRequest, io::Error> for MasterClient {
+impl Handler<MasterRequest> for MasterClient {
+    type Result = ();
 
-    fn started(&mut self, ctx: &mut FramedContext<Self>) {
-        self.hb(ctx);
-    }
-
-    fn finished(&mut self, ctx: &mut FramedContext<Self>) {
-        ctx.stop()
-    }
-}
-
-impl Handler<MasterRequest, io::Error> for MasterClient {
-
-    fn error(&mut self, _: io::Error, ctx: &mut FramedContext<Self>) {
-        ctx.stop()
-    }
-
-    fn handle(&mut self, msg: MasterRequest, ctx: &mut FramedContext<Self>)
-              -> Response<Self, MasterRequest>
-    {
+    fn handle(&mut self, msg: MasterRequest, ctx: &mut FramedContext<Self>) {
         match msg {
             MasterRequest::Ping => {
                 let _ = ctx.send(MasterResponse::Pong);
@@ -227,7 +216,7 @@ impl Handler<MasterRequest, io::Error> for MasterClient {
                             let _ = ctx.send(MasterResponse::Done);
                         },
                     };
-                    fut::ok(())
+                    actix::fut::ok(())
                 }).spawn(ctx);
             }
             MasterRequest::Resume(name) => {
@@ -240,7 +229,7 @@ impl Handler<MasterRequest, io::Error> for MasterClient {
                             let _ = ctx.send(MasterResponse::Done);
                         },
                     };
-                    fut::ok(())
+                    actix::fut::ok(())
                 }).spawn(ctx);
             }
             MasterRequest::Status(name) => {
@@ -254,7 +243,7 @@ impl Handler<MasterRequest, io::Error> for MasterClient {
                                 MasterResponse::ServiceStatus(status));
                         },
                     };
-                    fut::ok(())
+                    actix::fut::ok(())
                 }).spawn(ctx);
             }
             MasterRequest::SPid(name) => {
@@ -268,7 +257,7 @@ impl Handler<MasterRequest, io::Error> for MasterClient {
                                 MasterResponse::ServiceWorkerPids(pids));
                         },
                     };
-                    fut::ok(())
+                    actix::fut::ok(())
                 }).spawn(ctx);
             }
             MasterRequest::Pid => {
@@ -282,11 +271,10 @@ impl Handler<MasterRequest, io::Error> for MasterClient {
             MasterRequest::Quit => {
                 self.cmd.call(self, cmd::Stop).then(|_, _, ctx| {
                     let _ = ctx.send(MasterResponse::Done);
-                    fut::ok(())
+                    actix::fut::ok(())
                 }).spawn(ctx);
             }
         };
-        Self::empty()
     }
 }
 
