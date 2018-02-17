@@ -91,7 +91,7 @@ fn try_read_response(stream: &mut UnixStream, buf: &mut BytesMut)
 }
 
 /// Run client command
-pub fn run(cmd: ClientCommand, sock: String) -> bool {
+pub fn run(cmd: ClientCommand, sock: &str) -> bool {
     // create commands listener and also check if service process is running
     let mut buf = BytesMut::new();
     let mut stream = match UnixStream::connect(&sock) {
@@ -99,7 +99,7 @@ pub fn run(cmd: ClientCommand, sock: String) -> bool {
             conn.set_read_timeout(Some(Duration::new(1, 0))).expect("Couldn't set read timeout");
             let _ = send_command(&mut conn, MasterRequest::Ping);
 
-            if let Ok(_) = try_read_response(&mut conn, &mut buf) {
+            if try_read_response(&mut conn, &mut buf).is_ok() {
                 conn
             } else {
                 error!("Master process is not responding.");
@@ -175,7 +175,7 @@ pub fn run(cmd: ClientCommand, sock: String) -> bool {
                 let _ = io::stdout().flush();
             }
             Ok(MasterResponse::Done) => {
-                println!("");
+                println!();
                 return true
             }
             Ok(MasterResponse::Pid(pid)) => {
@@ -192,11 +192,7 @@ pub fn run(cmd: ClientCommand, sock: String) -> bool {
                     }
                 }
             }
-            Ok(MasterResponse::ServiceStarted) => {
-                println!("done");
-                return true
-            }
-            Ok(MasterResponse::ServiceStopped) => {
+            Ok(MasterResponse::ServiceStarted) | Ok(MasterResponse::ServiceStopped) => {
                 println!("done");
                 return true
             }
@@ -214,7 +210,7 @@ pub fn run(cmd: ClientCommand, sock: String) -> bool {
                             Reason::None | Reason::Initial => (),
                             _ => print!(", reason: {:?}", ev.reason),
                         }
-                        println!("");
+                        println!();
                     }
                 }
                 return true

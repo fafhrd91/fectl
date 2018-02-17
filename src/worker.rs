@@ -55,33 +55,33 @@ enum WorkerState {
 
 struct ProcessInfo {
     pid: Pid,
-    addr: Option<Address<Process>>,
+    addr: Option<Addr<Unsync, Process>>,
 }
 
 impl ProcessInfo {
     fn stop(&self) {
         if let Some(ref addr) = self.addr {
-            addr.send(process::StopProcess);
+            addr.do_send(process::StopProcess);
         }
     }
     fn quit(&self, graceful: bool) {
         if let Some(ref addr) = self.addr {
-            addr.send(process::QuitProcess(graceful));
+            addr.do_send(process::QuitProcess(graceful));
         }
     }
     fn start(&self) {
         if let Some(ref addr) = self.addr {
-            addr.send(process::StartProcess);
+            addr.do_send(process::StartProcess);
         }
     }
     fn pause(&self) {
         if let Some(ref addr) = self.addr {
-            addr.send(process::PauseProcess);
+            addr.do_send(process::PauseProcess);
         }
     }
     fn resume(&self) {
         if let Some(ref addr) = self.addr {
-            addr.send(process::ResumeProcess);
+            addr.do_send(process::ResumeProcess);
         }
     }
 }
@@ -94,12 +94,12 @@ pub struct Worker {
     pub restore_from_fail: bool,
     started: Instant,
     restarts: u16,
-    addr: Address<FeService>,
+    addr: Addr<Unsync, FeService>,
 }
 
 impl Worker {
 
-    pub fn new(idx: usize, cfg: ServiceConfig, addr: Address<FeService>) -> Worker
+    pub fn new(idx: usize, cfg: ServiceConfig, addr: Addr<Unsync, FeService>) -> Worker
     {
         Worker {
             idx: idx,

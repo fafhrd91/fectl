@@ -88,6 +88,6 @@ impl Events {
 impl<'a> std::convert::From<&'a Events> for Vec<Event>
 {
     fn from(ob: &'a Events) -> Self {
-        ob.events.iter().map(|e| e.clone()).collect()
+        ob.events.iter().cloned().collect()
     }
 }

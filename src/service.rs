@@ -6,6 +6,7 @@ use nix::unistd::Pid;
 
 use actix::prelude::*;
 use actix::Response;
+use futures::Future;
 
 use event::{Event, Reason};
 use config::ServiceConfig;
@@ -81,7 +82,7 @@ pub struct FeService {
 
 impl FeService {
 
-    pub fn start(num: u16, cfg: ServiceConfig) -> Address<FeService>
+    pub fn start(num: u16, cfg: ServiceConfig) -> Addr<Unsync, FeService>
     {
         FeService::create(move |ctx| {
             // create4 workers
@@ -266,9 +267,8 @@ impl Handler<ProcessExited> for FeService {
 /// Service status command
 pub struct Pids;
 
-impl ResponseType for Pids {
-    type Item = Vec<String>;
-    type Error = ();
+impl Message for Pids {
+    type Result = Vec<String>;
 }
 
 impl Handler<Pids> for FeService {
@@ -281,16 +281,15 @@ impl Handler<Pids> for FeService {
                 pids.push(format!("{}", pid));
             }
         }
-        Ok(pids)
+        MessageResult(pids)
     }
 }
 
 /// Service status command
 pub struct Status;
 
-impl ResponseType for Status {
-    type Item = (String, Vec<(String, Vec<Event>)>);
-    type Error = ();
+impl Message for Status {
+    type Result = Result<(String, Vec<(String, Vec<Event>)>), ()>;
 }
 
 impl Handler<Status> for FeService {
@@ -314,22 +313,18 @@ impl Handler<Status> for FeService {
 /// Start service command
 pub struct Start;
 
-impl ResponseType for Start {
-    type Item = StartStatus;
-    type Error = ServiceOperationError;
+impl Message for Start {
+    type Result = Result<StartStatus, ServiceOperationError>;
 }
 
 impl Handler<Start> for FeService {
-    type Result = Response<Self, Start>;
+    type Result = Response<StartStatus, ServiceOperationError>;
 
     fn handle(&mut self, _: Start, _: &mut Context<Self>) -> Self::Result
     {
         match self.state {
             ServiceState::Starting(ref mut task) => {
-                task.wait().actfuture().then(|res, _, _| match res {
-                    Ok(res) => actix::fut::result(Ok(res)),
-                    Err(_) => actix::fut::result(Err(ServiceOperationError::Failed)),
-                }).into()
+                Response::async(task.wait().map_err(|_| ServiceOperationError::Failed))
             }
             ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Starting service: {:?}", self.name);
@@ -340,12 +335,9 @@ impl Handler<Start> for FeService {
                 for worker in self.workers.iter_mut() {
                     worker.start(Reason::ConsoleRequest);
                 }
-                rx.actfuture().then(|res, _, _| match res {
-                    Ok(res) => actix::fut::result(Ok(res)),
-                    Err(_) => actix::fut::result(Err(ServiceOperationError::Failed)),
-                }).into()
+                Response::async(rx.map_err(|_| ServiceOperationError::Failed))
             }
-            _ => Self::reply(Err(self.state.error()))
+            _ => Response::reply(Err(self.state.error()))
         }
     }
 }
@@ -353,9 +345,8 @@ impl Handler<Start> for FeService {
 /// Pause service command
 pub struct Pause;
 
-impl ResponseType for Pause {
-    type Item = ();
-    type Error = ServiceOperationError;
+impl Message for Pause {
+    type Result = Result<(), ServiceOperationError>;
 }
 
 impl Handler<Pause> for FeService {
@@ -380,9 +371,8 @@ impl Handler<Pause> for FeService {
 /// Resume service command
 pub struct Resume;
 
-impl ResponseType for Resume {
-    type Item = ();
-    type Error = ServiceOperationError;
+impl Message for Resume {
+    type Result = Result<(), ServiceOperationError>;
 }
 
 impl Handler<Resume> for FeService {
@@ -406,21 +396,17 @@ impl Handler<Resume> for FeService {
 /// Reload service
 pub struct Reload(pub bool);
 
-impl ResponseType for Reload {
-    type Item = ReloadStatus;
-    type Error = ServiceOperationError;
+impl Message for Reload {
+    type Result = Result<ReloadStatus, ServiceOperationError>;
 }
 
 impl Handler<Reload> for FeService {
-    type Result = Response<Self, Reload>;
+    type Result = Response<ReloadStatus, ServiceOperationError>;
 
     fn handle(&mut self, msg: Reload, _: &mut Context<Self>) -> Self::Result {
         match self.state {
             ServiceState::Reloading(ref mut task) => {
-                task.wait().actfuture().then(|res, _, _| match res {
-                    Ok(res) => actix::fut::result(Ok(res)),
-                    Err(_) => actix::fut::result(Err(ServiceOperationError::Failed)),
-                }).into()
+                Response::async(task.wait().map_err(|_| ServiceOperationError::Failed))
             }
             ServiceState::Running | ServiceState::Failed | ServiceState::Stopped => {
                 debug!("Reloading service: {:?}", self.name);
@@ -431,22 +417,22 @@ impl Handler<Reload> for FeService {
                 for worker in self.workers.iter_mut() {
                     worker.reload(msg.0, Reason::ConsoleRequest);
                 }
-                rx.actfuture().then(|res, _, _| match res {
-                    Ok(res) => actix::fut::result(Ok(res)),
-                    Err(_) => actix::fut::result(Err(ServiceOperationError::Failed)),
-                }).into()
+                Response::async(rx.map_err(|_| ServiceOperationError::Failed))
             }
-            _ => Self::reply(Err(self.state.error()))
+            _ => Response::reply(Err(self.state.error()))
         }
     }
 }
 
 /// Stop service command
-#[derive(Message)]
 pub struct Stop(pub bool, pub Reason);
 
+impl Message for Stop {
+    type Result = Result<(), ()>;
+}
+
 impl Handler<Stop> for FeService {
-    type Result = Response<Self, Stop>;
+    type Result = Response<(), ()>;
 
     fn handle(&mut self, msg: Stop, _: &mut Context<Self>) -> Self::Result {
         let state = std::mem::replace(&mut self.state, ServiceState::Stopped);
@@ -454,16 +440,12 @@ impl Handler<Stop> for FeService {
         match state {
             ServiceState::Failed | ServiceState::Stopped => {
                 self.state = state;
-                return Self::reply(Err(()))
+                return Response::reply(Err(()))
             },
             ServiceState::Stopping(mut task) => {
                 let rx = task.wait();
                 self.state = ServiceState::Stopping(task);
-                return
-                    rx.actfuture().then(|res, _, _| match res {
-                        Ok(_) => actix::fut::ok(()),
-                        Err(_) => actix::fut::err(()),
-                    }).into();
+                return Response::async(rx.map(|_| ()).map_err(|_| ()));
             },
             ServiceState::Starting(task) => {
                 task.set(StartStatus::Stopping);
@@ -488,9 +470,6 @@ impl Handler<Stop> for FeService {
         }
         self.update();
 
-        rx.actfuture().then(|res, _, _| match res {
-            Ok(_) => actix::fut::ok(()),
-            Err(_) => actix::fut::err(()),
-        }).into()
+        Response::async(rx.map(|_| ()).map_err(|_| ()))
     }
 }

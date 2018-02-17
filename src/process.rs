@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 use serde_json as json;
 use byteorder::{ByteOrder, BigEndian};
 use bytes::{BytesMut, BufMut};
-use tokio_io::codec::{Encoder, Decoder};
+use tokio_io::AsyncRead;
+use tokio_io::io::WriteHalf;
+use tokio_io::codec::{FramedRead, Encoder, Decoder};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::{close, pipe, fork, ForkResult, Pid};
 
@@ -32,32 +34,31 @@ pub struct Process {
     pid: Pid,
     state: ProcessState,
     hb: Instant,
-    addr: Address<FeService>,
+    addr: Addr<Unsync, FeService>,
     timeout: Duration,
     startup_timeout: u64,
     shutdown_timeout: u64,
+    framed: actix::io::FramedWrite<WriteHalf<PipeFile>, TransportCodec>,
 }
 
 impl Actor for Process {
-    type Context = FramedContext<Self>;
+    type Context = Context<Self>;
 
-    fn stopping(&mut self, ctx: &mut FramedContext<Self>) -> bool {
+    fn stopping(&mut self, ctx: &mut Context<Self>) -> Running {
         self.kill(ctx, false);
-        true
+        Running::Stop
     }
 }
 
-impl FramedActor for Process {
-    type Io = PipeFile;
-    type Codec = TransportCodec;
+impl StreamHandler<ProcessMessage, io::Error> for Process {
 
-    fn handle(&mut self, msg: io::Result<ProcessMessage>, ctx: &mut Self::Context) {
-        match msg {
-            Err(_) => self.kill(ctx, false),
-            Ok(msg) => {
-                ctx.notify(msg);
-            },
-        }
+    fn finished(&mut self, ctx: &mut Context<Self>) {
+        self.kill(ctx, false);
+        ctx.stop();
+    }
+
+    fn handle(&mut self, msg: ProcessMessage, ctx: &mut Self::Context) {
+        ctx.notify(msg);
     }
 }
 
@@ -133,15 +134,15 @@ impl<'a> std::convert::From<&'a ProcessError> for Reason
 
 impl Process {
 
-    pub fn start(idx: usize, cfg: &ServiceConfig, addr: Address<FeService>)
-                 -> (Pid, Option<Address<Process>>)
+    pub fn start(idx: usize, cfg: &ServiceConfig, addr: Addr<Unsync, FeService>)
+                 -> (Pid, Option<Addr<Unsync, Process>>)
     {
         // fork process and esteblish communication
         let (pid, pipe) = match Process::fork(cfg) {
             Ok(res) => res,
             Err(err) => {
                 let pid = Pid::from_raw(-1);
-                addr.send(
+                addr.do_send(
                     service::ProcessFailed(
                         idx, pid,
                         ProcessError::FailedToStart(Some(format!("{}", err)))));
@@ -155,21 +156,22 @@ impl Process {
         let shutdown_timeout = cfg.shutdown_timeout as u64;
 
         // start Process service
-        let addr = Process::create_framed(
-            pipe, TransportCodec, move |ctx| {
-                ctx.notify_later(ProcessMessage::StartupTimeout,
-                                 Duration::new(startup_timeout as u64, 0));
-                Process {
-                    idx: idx,
-                    pid: pid,
-                    state: ProcessState::Starting,
-                    hb: Instant::now(),
-                    addr: addr,
-                    timeout: timeout,
-                    startup_timeout: startup_timeout,
-                    shutdown_timeout: shutdown_timeout,
-                }
-            });
+        let addr = Process::create(move |ctx| {
+            let (r, w) = pipe.split();
+            ctx.add_stream(FramedRead::new(r, TransportCodec));
+            ctx.notify_later(ProcessMessage::StartupTimeout,
+                             Duration::new(startup_timeout as u64, 0));
+            Process {
+                idx: idx,
+                pid: pid,
+                state: ProcessState::Starting,
+                hb: Instant::now(),
+                addr: addr,
+                timeout: timeout,
+                startup_timeout: startup_timeout,
+                shutdown_timeout: shutdown_timeout,
+                framed: actix::io::FramedWrite::new(w, TransportCodec, ctx)
+            }});
         (pid, Some(addr))
     }
 
@@ -221,7 +223,7 @@ impl Process {
         Ok((p_read, p_write, ch_read, ch_write))
     }
 
-    fn kill(&self, ctx: &mut FramedContext<Self>, graceful: bool) {
+    fn kill(&self, ctx: &mut Context<Self>, graceful: bool) {
         if graceful {
             ctx.notify_later(ProcessMessage::Kill, Duration::new(1, 0));
         } else {
@@ -237,21 +239,23 @@ impl Drop for Process {
     }
 }
 
+impl actix::io::WriteHandler<io::Error> for Process {}
+
 impl Handler<ProcessMessage> for Process {
     type Result = ();
 
-    fn handle(&mut self, msg: ProcessMessage, ctx: &mut FramedContext<Self>) {
+    fn handle(&mut self, msg: ProcessMessage, ctx: &mut Context<Self>) {
         match msg {
             ProcessMessage::Message(msg) => match msg {
                 WorkerMessage::forked => {
                     debug!("Worker forked (pid:{})", self.pid);
-                    let _ = ctx.send(WorkerCommand::prepare);
+                    self.framed.write(WorkerCommand::prepare);
                 }
                 WorkerMessage::loaded => {
                     match self.state {
                         ProcessState::Starting => {
                             debug!("Worker loaded (pid:{})", self.pid);
-                            self.addr.send(
+                            self.addr.do_send(
                                 service::ProcessLoaded(self.idx, self.pid));
 
                             // start heartbeat timer
@@ -271,20 +275,20 @@ impl Handler<ProcessMessage> for Process {
                 WorkerMessage::reload => {
                     // worker requests reload
                     info!("Worker requests reload (pid:{})", self.pid);
-                    self.addr.send(
+                    self.addr.do_send(
                         service::ProcessMessage(
                             self.idx, self.pid, WorkerMessage::reload));
                 }
                 WorkerMessage::restart => {
                     // worker requests reload
                     info!("Worker requests restart (pid:{})", self.pid);
-                    self.addr.send(
+                    self.addr.do_send(
                         service::ProcessMessage(
                             self.idx, self.pid, WorkerMessage::restart));
                 }
                 WorkerMessage::cfgerror(msg) => {
                     error!("Worker config error: {} (pid:{})", msg, self.pid);
-                    self.addr.send(
+                    self.addr.do_send(
                         service::ProcessFailed(
                             self.idx, self.pid, ProcessError::ConfigError(msg)));
                 }
@@ -293,7 +297,7 @@ impl Handler<ProcessMessage> for Process {
                 match self.state {
                     ProcessState::Starting => {
                         error!("Worker startup timeout after {} secs", self.startup_timeout);
-                        self.addr.send(
+                        self.addr.do_send(
                             service::ProcessFailed(
                                 self.idx, self.pid, ProcessError::StartupTimeout));
 
@@ -309,7 +313,7 @@ impl Handler<ProcessMessage> for Process {
                 match self.state {
                     ProcessState::Stopping => {
                         info!("Worker shutdown timeout aftre {} secs", self.shutdown_timeout);
-                        self.addr.send(
+                        self.addr.do_send(
                             service::ProcessFailed(
                                 self.idx, self.pid, ProcessError::StopTimeout));
 
@@ -328,12 +332,12 @@ impl Handler<ProcessMessage> for Process {
                         // heartbeat timed out
                         error!("Worker heartbeat failed (pid:{}) after {:?} secs",
                                self.pid, self.timeout);
-                        self.addr.send(
+                        self.addr.do_send(
                             service::ProcessFailed(
                                 self.idx, self.pid, ProcessError::Heartbeat));
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
-                        let _ = ctx.send(WorkerCommand::hb);
+                        self.framed.write(WorkerCommand::hb);
                         ctx.notify_later(
                             ProcessMessage::Heartbeat, Duration::new(HEARTBEAT, 0));
                     }
@@ -354,8 +358,8 @@ pub struct SendCommand(pub WorkerCommand);
 impl Handler<SendCommand> for Process {
     type Result = ();
 
-    fn handle(&mut self, msg: SendCommand, ctx: &mut FramedContext<Process>) {
-        let _ = ctx.send(msg.0);
+    fn handle(&mut self, msg: SendCommand, _: &mut Context<Process>) {
+        self.framed.write(msg.0);
     }
 }
 
@@ -365,8 +369,8 @@ pub struct StartProcess;
 impl Handler<StartProcess> for Process {
     type Result = ();
 
-    fn handle(&mut self, _: StartProcess, ctx: &mut FramedContext<Process>) {
-        let _ = ctx.send(WorkerCommand::start);
+    fn handle(&mut self, _: StartProcess, _: &mut Context<Process>) {
+        self.framed.write(WorkerCommand::start);
     }
 }
 
@@ -376,8 +380,8 @@ pub struct PauseProcess;
 impl Handler<PauseProcess> for Process {
     type Result = ();
 
-    fn handle(&mut self, _: PauseProcess, ctx: &mut FramedContext<Process>) {
-        let _ = ctx.send(WorkerCommand::pause);
+    fn handle(&mut self, _: PauseProcess, _: &mut Context<Process>) {
+        self.framed.write(WorkerCommand::pause);
     }
 }
 
@@ -387,8 +391,8 @@ pub struct ResumeProcess;
 impl Handler<ResumeProcess> for Process {
     type Result = ();
 
-    fn handle(&mut self, _: ResumeProcess, ctx: &mut FramedContext<Process>) {
-        let _ = ctx.send(WorkerCommand::resume);
+    fn handle(&mut self, _: ResumeProcess, _: &mut Context<Process>) {
+        self.framed.write(WorkerCommand::resume);
     }
 }
 
@@ -398,14 +402,14 @@ pub struct StopProcess;
 impl Handler<StopProcess> for Process {
     type Result = ();
 
-    fn handle(&mut self, _: StopProcess, ctx: &mut FramedContext<Process>)
+    fn handle(&mut self, _: StopProcess, ctx: &mut Context<Process>)
     {
         info!("Stopping worker: (pid:{})", self.pid);
         match self.state {
             ProcessState::Running => {
                 self.state = ProcessState::Stopping;
 
-                let _ = ctx.send(WorkerCommand::stop);
+                self.framed.write(WorkerCommand::stop);
                 ctx.notify_later(
                     ProcessMessage::StopTimeout,
                     Duration::new(self.shutdown_timeout, 0));
@@ -425,7 +429,7 @@ pub struct QuitProcess(pub bool);
 impl Handler<QuitProcess> for Process {
     type Result = ();
 
-    fn handle(&mut self, msg: QuitProcess, ctx: &mut FramedContext<Process>) {
+    fn handle(&mut self, msg: QuitProcess, ctx: &mut Context<Process>) {
         if msg.0 {
             let _ = kill(self.pid, Signal::SIGQUIT);
             self.kill(ctx, true);

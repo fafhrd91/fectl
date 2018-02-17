@@ -15,7 +15,9 @@ use bytes::{BytesMut, BufMut};
 use futures::Stream;
 use tokio_core::reactor::Timeout;
 use tokio_uds::{UnixStream, UnixListener};
-use tokio_io::codec::{Encoder, Decoder};
+use tokio_io::AsyncRead;
+use tokio_io::io::WriteHalf;
+use tokio_io::codec::{FramedRead, Encoder, Decoder};
 
 use actix::prelude::*;
 
@@ -29,7 +31,7 @@ use master_types::{MasterRequest, MasterResponse};
 
 pub struct Master {
     cfg: Rc<Config>,
-    cmd: Address<CommandCenter>,
+    cmd: Addr<Unsync, CommandCenter>,
 }
 
 impl Actor for Master {
@@ -39,14 +41,19 @@ impl Actor for Master {
 #[derive(Message)]
 struct NetStream(UnixStream, std::os::unix::net::SocketAddr);
 
-impl Handler<io::Result<NetStream>> for Master {
-    type Result = ();
+impl StreamHandler<NetStream, io::Error> for Master {
 
-    fn handle(&mut self, msg: io::Result<NetStream>, _: &mut Context<Self>) {
-        if let Ok(msg) = msg {
-            let cmd = self.cmd.clone();
-            let _: () = MasterClient{cmd: cmd}.framed(msg.0, MasterTransportCodec);
-        }
+    fn handle(&mut self, msg: NetStream, _: &mut Context<Self>) {
+        let cmd = self.cmd.clone();
+
+        MasterClient::create(|ctx| {
+            let (r, w) = msg.0.split();
+            ctx.add_stream(FramedRead::new(r, MasterTransportCodec));
+
+            MasterClient{
+                cmd: cmd,
+                framed: actix::io::FramedWrite::new(w, MasterTransportCodec, ctx)}
+        })
     }
 }
 
@@ -57,146 +64,147 @@ impl Drop for Master {
 }
 
 struct MasterClient {
-    cmd: Address<CommandCenter>,
+    cmd: Addr<Unsync, CommandCenter>,
+    framed: actix::io::FramedWrite<WriteHalf<UnixStream>, MasterTransportCodec>,
 }
 
 impl Actor for MasterClient {
-    type Context = FramedContext<Self>;
+    type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
     }
 }
 
-impl FramedActor for MasterClient {
-    type Io = UnixStream;
-    type Codec= MasterTransportCodec;
+impl actix::io::WriteHandler<io::Error> for MasterClient {}
 
-    fn handle(&mut self, msg: io::Result<MasterRequest>, ctx: &mut Self::Context) {
-        if let Ok(msg) = msg {
-            ctx.notify(msg);
-        }
+impl StreamHandler<MasterRequest, io::Error> for MasterClient {
+
+    fn handle(&mut self, msg: MasterRequest, ctx: &mut Self::Context) {
+        ctx.notify(msg);
     }
 }
 
 impl MasterClient {
 
-    fn hb(&self, ctx: &mut FramedContext<Self>) {
+    fn hb(&self, ctx: &mut Context<Self>) {
         let fut = Timeout::new(Duration::new(1, 0), Arbiter::handle())
             .unwrap()
             .actfuture()
-            .then(|_, act: &mut MasterClient, ctx: &mut FramedContext<Self>| {
-                if let Ok(_) = ctx.send(MasterResponse::Pong) {
-                    act.hb(ctx);
-                }
+            .then(|_, act: &mut MasterClient, ctx: &mut Context<Self>| {
+                act.framed.write(MasterResponse::Pong);
+                act.hb(ctx);
                 actix::fut::ok(())
             });
         ctx.spawn(fut);
     }
 
-    fn handle_error(&mut self, err: CommandError, ctx: &mut FramedContext<Self>) {
+    fn handle_error(&mut self, err: CommandError, _: &mut Context<Self>) {
         let _ = match err {
             CommandError::NotReady =>
-                ctx.send(MasterResponse::ErrorNotReady),
+                self.framed.write(MasterResponse::ErrorNotReady),
             CommandError::UnknownService =>
-                ctx.send(MasterResponse::ErrorUnknownService),
+                self.framed.write(MasterResponse::ErrorUnknownService),
             CommandError::ServiceStopped =>
-                ctx.send(MasterResponse::ErrorServiceStopped),
+                self.framed.write(MasterResponse::ErrorServiceStopped),
             CommandError::Service(err) => match err {
                 ServiceOperationError::Starting =>
-                    ctx.send(MasterResponse::ErrorServiceStarting),
+                    self.framed.write(MasterResponse::ErrorServiceStarting),
                 ServiceOperationError::Reloading =>
-                    ctx.send(MasterResponse::ErrorServiceReloading),
+                    self.framed.write(MasterResponse::ErrorServiceReloading),
                 ServiceOperationError::Stopping =>
-                    ctx.send(MasterResponse::ErrorServiceStopping),
+                    self.framed.write(MasterResponse::ErrorServiceStopping),
                 ServiceOperationError::Running =>
-                    ctx.send(MasterResponse::ErrorServiceRunning),
+                    self.framed.write(MasterResponse::ErrorServiceRunning),
                 ServiceOperationError::Stopped =>
-                    ctx.send(MasterResponse::ErrorServiceStopped),
+                    self.framed.write(MasterResponse::ErrorServiceStopped),
                 ServiceOperationError::Failed =>
-                    ctx.send(MasterResponse::ErrorServiceFailed),
+                    self.framed.write(MasterResponse::ErrorServiceFailed),
             }
         };
     }
 
-    fn stop(&mut self, name: String, ctx: &mut FramedContext<Self>) {
+    fn stop(&mut self, name: String, ctx: &mut Context<Self>) {
         info!("Client command: Stop service '{}'", name);
 
-        self.cmd.call(self, cmd::StopService(name, true)).then(|res, srv, ctx| {
-            match res {
-                Err(_) => (),
-                Ok(Err(err)) => match err {
-                    CommandError::ServiceStopped => {
-                        let _ = ctx.send(MasterResponse::ServiceStarted);
-                    },
-                    _ => srv.handle_error(err, ctx),
-                }
-                Ok(Ok(_)) => {
-                    let _ = ctx.send(MasterResponse::ServiceStopped);
-                }
-            };
-            actix::fut::ok(())
-        }).spawn(ctx);
+        self.cmd.send(cmd::StopService(name, true))
+            .into_actor(self)
+            .then(|res, srv, ctx| {
+                match res {
+                    Err(_) => (),
+                    Ok(Err(err)) => match err {
+                        CommandError::ServiceStopped =>
+                            srv.framed.write(MasterResponse::ServiceStarted),
+                        _ => srv.handle_error(err, ctx),
+                    }
+                    Ok(Ok(_)) =>
+                        srv.framed.write(MasterResponse::ServiceStopped),
+                };
+                actix::fut::ok(())
+            }).spawn(ctx);
     }
 
-    fn reload(&mut self, name: String, ctx: &mut FramedContext<Self>, graceful: bool)
+    fn reload(&mut self, name: String, ctx: &mut Context<Self>, graceful: bool)
     {
         info!("Client command: Reload service '{}'", name);
 
-        self.cmd.call(self, cmd::ReloadService(name, graceful)).then(|res, srv, ctx| {
-            match res {
-                Err(_) => (),
-                Ok(Err(err)) => srv.handle_error(err, ctx),
-                Ok(Ok(res)) => {
-                    let _ = match res {
-                        ReloadStatus::Success =>
-                            ctx.send(MasterResponse::ServiceStarted),
-                        ReloadStatus::Failed =>
-                            ctx.send(MasterResponse::ServiceFailed),
-                        ReloadStatus::Stopping =>
-                            ctx.send(MasterResponse::ErrorServiceStopping),
-                    };
+        self.cmd.send(cmd::ReloadService(name, graceful))
+            .into_actor(self)
+            .then(|res, srv, ctx| {
+                match res {
+                    Err(_) => (),
+                    Ok(Err(err)) => srv.handle_error(err, ctx),
+                    Ok(Ok(res)) => {
+                        let _ = match res {
+                            ReloadStatus::Success =>
+                                srv.framed.write(MasterResponse::ServiceStarted),
+                            ReloadStatus::Failed =>
+                                srv.framed.write(MasterResponse::ServiceFailed),
+                            ReloadStatus::Stopping =>
+                                srv.framed.write(MasterResponse::ErrorServiceStopping),
+                        };
+                    }
                 }
-            }
-            actix::fut::ok(())
-        }).spawn(ctx);
+                actix::fut::ok(())
+            }).spawn(ctx);
     }
 
-    fn start_service(&mut self, name: String, ctx: &mut FramedContext<Self>) {
+    fn start_service(&mut self, name: String, ctx: &mut Context<Self>) {
         info!("Client command: Start service '{}'", name);
 
-        self.cmd.call(self, cmd::StartService(name)).then(|res, srv, ctx| {
-            match res {
-                Err(_) => (),
-                Ok(Err(err)) => srv.handle_error(err, ctx),
-                Ok(Ok(res)) => {
-                    let _ = match res {
-                        StartStatus::Success =>
-                            ctx.send(MasterResponse::ServiceStarted),
-                        StartStatus::Failed =>
-                            ctx.send(MasterResponse::ServiceFailed),
-                        StartStatus::Stopping =>
-                            ctx.send(MasterResponse::ErrorServiceStopping),
-                    };
+        self.cmd.send(cmd::StartService(name))
+            .into_actor(self)
+            .then(|res, srv, ctx| {
+                match res {
+                    Err(_) => (),
+                    Ok(Err(err)) => srv.handle_error(err, ctx),
+                    Ok(Ok(res)) => {
+                        let _ = match res {
+                            StartStatus::Success =>
+                                srv.framed.write(MasterResponse::ServiceStarted),
+                            StartStatus::Failed =>
+                                srv.framed.write(MasterResponse::ServiceFailed),
+                            StartStatus::Stopping =>
+                                srv.framed.write(MasterResponse::ErrorServiceStopping),
+                        };
+                    }
                 }
-            }
-            actix::fut::ok(())
-        }).spawn(ctx);
+                actix::fut::ok(())
+            }).spawn(ctx);
     }
 }
 
-impl ResponseType for MasterRequest {
-    type Item = ();
-    type Error = ();
+impl Message for MasterRequest {
+    type Result = ();
 }
 
 impl Handler<MasterRequest> for MasterClient {
     type Result = ();
 
-    fn handle(&mut self, msg: MasterRequest, ctx: &mut FramedContext<Self>) {
+    fn handle(&mut self, msg: MasterRequest, ctx: &mut Context<Self>) {
         match msg {
             MasterRequest::Ping => {
-                let _ = ctx.send(MasterResponse::Pong);
+                self.framed.write(MasterResponse::Pong);
             },
             MasterRequest::Start(name) =>
                 self.start_service(name, ctx),
@@ -208,71 +216,79 @@ impl Handler<MasterRequest> for MasterClient {
                 self.stop(name, ctx),
             MasterRequest::Pause(name) => {
                 info!("Client command: Pause service '{}'", name);
-                self.cmd.call(self, cmd::PauseService(name)).then(|res, srv, ctx| {
-                    match res {
-                        Err(_) => (),
-                        Ok(Err(err)) => srv.handle_error(err, ctx),
-                        Ok(Ok(_)) => {
-                            let _ = ctx.send(MasterResponse::Done);
-                        },
-                    };
-                    actix::fut::ok(())
-                }).spawn(ctx);
+                self.cmd.send(cmd::PauseService(name))
+                    .into_actor(self)
+                    .then(|res, srv, ctx| {
+                        match res {
+                            Err(_) => (),
+                            Ok(Err(err)) => srv.handle_error(err, ctx),
+                            Ok(Ok(_)) => {
+                                srv.framed.write(MasterResponse::Done);
+                            },
+                        };
+                        actix::fut::ok(())
+                    }).spawn(ctx);
             }
             MasterRequest::Resume(name) => {
                 info!("Client command: Resume service '{}'", name);
-                self.cmd.call(self, cmd::ResumeService(name)).then(|res, srv, ctx| {
-                    match res {
-                        Err(_) => (),
-                        Ok(Err(err)) => srv.handle_error(err, ctx),
-                        Ok(Ok(_)) => {
-                            let _ = ctx.send(MasterResponse::Done);
-                        },
-                    };
-                    actix::fut::ok(())
-                }).spawn(ctx);
+                self.cmd.send(cmd::ResumeService(name))
+                    .into_actor(self)
+                    .then(|res, srv, ctx| {
+                        match res {
+                            Err(_) => (),
+                            Ok(Err(err)) => srv.handle_error(err, ctx),
+                            Ok(Ok(_)) => {
+                                srv.framed.write(MasterResponse::Done);
+                            },
+                        };
+                        actix::fut::ok(())
+                    }).spawn(ctx);
             }
             MasterRequest::Status(name) => {
                 debug!("Client command: Service status '{}'", name);
-                self.cmd.call(self, cmd::StatusService(name)).then(|res, srv, ctx| {
-                    match res {
-                        Err(_) => (),
-                        Ok(Err(err)) => srv.handle_error(err, ctx),
-                        Ok(Ok(status)) => {
-                            let _ = ctx.send(
-                                MasterResponse::ServiceStatus(status));
-                        },
-                    };
-                    actix::fut::ok(())
-                }).spawn(ctx);
+                self.cmd.send(cmd::StatusService(name))
+                    .into_actor(self)
+                    .then(|res, srv, ctx| {
+                        match res {
+                            Err(_) => (),
+                            Ok(Err(err)) => srv.handle_error(err, ctx),
+                            Ok(Ok(status)) => {
+                                srv.framed.write(MasterResponse::ServiceStatus(status));
+                            },
+                        };
+                        actix::fut::ok(())
+                    }).spawn(ctx);
             }
             MasterRequest::SPid(name) => {
                 debug!("Client command: Service status '{}'", name);
-                self.cmd.call(self, cmd::ServicePids(name)).then(|res, srv, ctx| {
-                    match res {
-                        Err(_) => (),
-                        Ok(Err(err)) => srv.handle_error(err, ctx),
-                        Ok(Ok(pids)) => {
-                            let _ = ctx.send(
-                                MasterResponse::ServiceWorkerPids(pids));
-                        },
-                    };
-                    actix::fut::ok(())
-                }).spawn(ctx);
+                self.cmd.send(cmd::ServicePids(name))
+                    .into_actor(self)
+                    .then(|res, srv, ctx| {
+                        match res {
+                            Err(_) => (),
+                            Ok(Err(err)) => srv.handle_error(err, ctx),
+                            Ok(Ok(pids)) => {
+                                srv.framed.write(MasterResponse::ServiceWorkerPids(pids));
+                            },
+                        };
+                        actix::fut::ok(())
+                    }).spawn(ctx);
             }
             MasterRequest::Pid => {
-                let _ = ctx.send(MasterResponse::Pid(
+                self.framed.write(MasterResponse::Pid(
                     format!("{}", nix::unistd::getpid())));
             },
             MasterRequest::Version => {
-                let _ = ctx.send(MasterResponse::Version(
+                self.framed.write(MasterResponse::Version(
                     format!("{} {}", PKG_INFO.name, PKG_INFO.version)));
             },
             MasterRequest::Quit => {
-                self.cmd.call(self, cmd::Stop).then(|_, _, ctx| {
-                    let _ = ctx.send(MasterResponse::Done);
-                    actix::fut::ok(())
-                }).spawn(ctx);
+                self.cmd.send(cmd::Stop)
+                    .into_actor(self)
+                    .then(|_, act, _| {
+                        act.framed.write(MasterResponse::Done);
+                        actix::fut::ok(())
+                    }).spawn(ctx);
             }
         };
     }

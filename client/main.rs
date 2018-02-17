@@ -29,7 +29,7 @@ fn main() {
     let _ = env_logger::init();
 
     let success = match config::load_config() {
-        Some((cmd, sock)) => client::run(cmd, sock),
+        Some((cmd, sock)) => client::run(cmd, &sock),
         None => false,
     };
     std::process::exit(if success {0} else {1});
