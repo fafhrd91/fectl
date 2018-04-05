@@ -28,7 +28,7 @@ pub(crate) fn find_path(name: &str) -> Option<String>
 pub fn get_env_vars(all: bool) -> Vec<CString> {
     let mut env = Vec::new();
     for (k, v) in env::vars() {
-        if (all && !k.starts_with('_')) && (
+        if (all && !k.starts_with('_')) || (
             k.starts_with("FECTL_FD") || k.starts_with("LANG") || k.starts_with("LC_"))
         {
             env.push(CString::new(format!("{}={}", k, v)).unwrap());

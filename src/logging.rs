@@ -21,7 +21,7 @@ pub fn init_logging(cfg: &LoggingConfig) {
     Builder::new()
         .format(|buf, record| {
             let t = time::now();
-            write!(buf, "{},{:03} - {} - {}",
+            write!(buf, "{},{:03} - {} - {}\n",
                    time::strftime("%Y-%m-%d %H:%M:%S", &t).unwrap(),
                    t.tm_nsec / 1000_000,
                    record.level(),
