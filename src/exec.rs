@@ -29,7 +29,7 @@ fn send_msg(file: &mut std::fs::File, msg: WorkerMessage) {
     }
 }
 
-pub fn exec_worker(cfg: &ServiceConfig, read: RawFd, write: RawFd) {
+pub fn exec_worker(idx: usize, cfg: &ServiceConfig, read: RawFd, write: RawFd) {
     // notify master
     let mut file = unsafe{ std::fs::File::from_raw_fd(write) };
     send_msg(&mut file, WorkerMessage::forked);
@@ -139,6 +139,7 @@ pub fn exec_worker(cfg: &ServiceConfig, read: RawFd, write: RawFd) {
     let mut env = utils::get_env_vars(true);
     env.push(CString::new(format!("FECTL_FD={}:{}", read, write)).unwrap());
     env.push(CString::new(format!("FECTL_SRV_NAME={}", cfg.name)).unwrap());
+    env.push(CString::new(format!("FECTL_PROC_IDX={}", idx)).unwrap());
     match execve(&CString::new(path).unwrap(), &args, &env) {
         Ok(_) => unreachable!(),
         Err(err) => {

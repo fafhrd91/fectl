@@ -138,7 +138,7 @@ impl Process {
                  -> (Pid, Option<Addr<Unsync, Process>>)
     {
         // fork process and esteblish communication
-        let (pid, pipe) = match Process::fork(cfg) {
+        let (pid, pipe) = match Process::fork(idx, cfg) {
             Ok(res) => res,
             Err(err) => {
                 let pid = Pid::from_raw(-1);
@@ -175,7 +175,7 @@ impl Process {
         (pid, Some(addr))
     }
 
-    fn fork(cfg: &ServiceConfig) -> Result<(Pid, PipeFile), io::Error>
+    fn fork(idx: usize, cfg: &ServiceConfig) -> Result<(Pid, PipeFile), io::Error>
     {
         let (p_read, p_write, ch_read, ch_write) = Process::create_pipes()?;
 
@@ -185,7 +185,7 @@ impl Process {
             Ok(ForkResult::Child) => {
                 let _ = close(p_write);
                 let _ = close(ch_read);
-                exec_worker(cfg, p_read, ch_write);
+                exec_worker(idx, cfg, p_read, ch_write);
                 unreachable!();
             },
             Err(err) => {

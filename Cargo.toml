@@ -1,6 +1,6 @@
 [package]
 name = "fectl"
-version = "0.2.7"
+version = "0.2.8"
 authors = ["Nikolay Kim <fafhrd91@gmail.com>"]
 description = "Process management utility"
 readme = "README.md"
@@ -35,26 +35,25 @@ boxfnonce = "*"
 bytes = "0.4"
 mio = "0.6"
 futures = "0.1"
-tokio-core = "0.1"
-tokio-io = "0.1"
+tokio-core = "0.1.12"
+tokio-io = "0.1.5"
 tokio-signal = "0.1"
 tokio-uds = "0.1"
 
 # logging
 time = "*"
-log = "0.3"
-syslog = "3.3"
-env_logger = "0.4"
+log = "0.4"
+env_logger = "0.5"
 
 # cli
-structopt = "0.1"
-structopt-derive = "0.1"
+structopt = "0.2"
+structopt-derive = "0.2"
 
 # config
 toml = "*"
-serde = "*"
-serde_json = "*"
-serde_derive = "*"
+serde = "1.0"
+serde_json = "1.0"
+serde_derive = "1.0"
 
 [profile.release]
 lto = true
