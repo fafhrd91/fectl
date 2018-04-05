@@ -149,12 +149,12 @@ impl AddrInfo {
                socktype: SocketType, protocol: Protocol,
                addr: SocketAddr, canonname: Option<String>) -> AddrInfo {
         AddrInfo {
-            flags: flags,
-            family: family,
-            socktype: socktype,
-            protocol: protocol,
+            flags,
+            family,
+            socktype,
+            protocol,
             sockaddr: addr,
-            canonname: canonname }
+            canonname }
     }
 
     unsafe fn from_ptr<'a>(a: *mut libc::addrinfo) -> Result<Self, LookupError> {
@@ -219,11 +219,11 @@ impl LookupParams {
     pub fn new(host: Option<String>, port: Option<String>,
                family: c_int, flags: c_int, socktype: SocketType) -> LookupParams {
         LookupParams {
-            host: host,
-            port: port,
-            family: family,
-            flags: flags,
-            socktype: socktype,
+            host,
+            port,
+            family,
+            flags,
+            socktype,
         }
     }
 }

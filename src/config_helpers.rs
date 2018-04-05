@@ -61,7 +61,7 @@ pub(crate) fn deserialize_gid_field<'de, D>(de: D) -> Result<Option<Gid>, D::Err
             }
         json::Value::Number(num) => {
             if let Some(num) = num.as_u64() {
-                if num <= u32::max_value() as u64 {
+                if num <= u64::from(u32::max_value()) {
                     return Ok(Some(Gid::from_raw(num as libc::gid_t)))
                 }
             }
@@ -92,7 +92,7 @@ pub fn deserialize_uid_field<'de, D>(de: D) -> Result<Option<Uid>, D::Error>
             }
         json::Value::Number(num) => {
             if let Some(num) = num.as_u64() {
-                if num <= u32::max_value() as u64 {
+                if num <= u64::from(u32::max_value()) {
                     return Ok(Some(Uid::from_raw(num as u32)));
                 }
             }

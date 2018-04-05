@@ -102,14 +102,12 @@ impl Worker {
     pub fn new(idx: usize, cfg: ServiceConfig, addr: Addr<Unsync, FeService>) -> Worker
     {
         Worker {
-            idx: idx,
-            cfg: cfg,
+            idx, cfg, addr,
             state: WorkerState::Initial,
             events: Events::new(50),
             started: Instant::now(),
             restore_from_fail: false,
-            restarts: 0,
-            addr: addr}
+            restarts: 0}
     }
 
     pub fn start(&mut self, reason: Reason) {
@@ -118,7 +116,7 @@ impl Worker {
             WorkerState::Initial | WorkerState::Stopped | WorkerState::Failed => {
                 debug!("Starting worker process id: {:?}", id);
                 let (pid, addr) = Process::start(self.idx, &self.cfg, self.addr.clone());
-                self.state = WorkerState::Starting(ProcessInfo{pid: pid, addr: addr});
+                self.state = WorkerState::Starting(ProcessInfo{pid, addr});
                 self.events.add(State::Starting, reason, str(pid));
             }
             _ => (),
@@ -207,7 +205,7 @@ impl Worker {
             WorkerState::Running(process) => {
                 // start new worker
                 let (pid, addr) = Process::start(self.idx, &self.cfg, self.addr.clone());
-                let info = ProcessInfo{pid: pid, addr: addr};
+                let info = ProcessInfo{pid, addr};
 
                 if graceful {
                     info!("Reloading worker: (pid:{})", process.pid);
@@ -317,11 +315,11 @@ impl Worker {
         };
 
         if reload {
-            match message {
-                &WorkerMessage::reload => {
+            match *message {
+                WorkerMessage::reload => {
                     self.reload(true, Reason::WorkerRequest)
                 },
-                &WorkerMessage::restart => {
+                WorkerMessage::restart => {
                     self.reload(false, Reason::WorkerRequest)
                 },
                 _ => (),
@@ -330,22 +328,16 @@ impl Worker {
     }
 
     pub fn pause(&mut self, reason: Reason) {
-        match self.state {
-            WorkerState::Running(ref process) => {
-                process.pause();
-                self.events.add(State::Paused, reason, str(process.pid));
-            }
-            _ => (),
+        if let WorkerState::Running(ref process) = self.state {
+            process.pause();
+            self.events.add(State::Paused, reason, str(process.pid));
         }
     }
 
     pub fn resume(&mut self, reason: Reason) {
-        match self.state {
-            WorkerState::Running(ref process) => {
-                process.resume();
-                self.events.add(State::Running, reason, str(process.pid));
-            }
-            _ => (),
+        if let WorkerState::Running(ref process) = self.state {
+            process.resume();
+            self.events.add(State::Running, reason, str(process.pid));
         }
     }
 
@@ -357,8 +349,8 @@ impl Worker {
                 if process.pid != pid {
                     self.state = WorkerState::Running(process);
                 } else {
-                    match err {
-                        &ProcessError::StartupTimeout => {
+                    match *err {
+                        ProcessError::StartupTimeout => {
                             self.state = WorkerState::Running(process);
                             self.events.add(State::Running, err.into(), str(pid));
                             self.restore_from_fail = true;
@@ -383,14 +375,14 @@ impl Worker {
                 if process.pid != pid {
                     self.state = WorkerState::Starting(process);
                 } else {
-                    match err {
+                    match *err {
                         // can not boot worker, fail immidietly
                         //&ProcessError::InitFailed | &ProcessError::BootFailed => {
                         //    self.state = WorkerState::Failed;
                         //    self.events.add(State::Failed, Reason::from(err), str(pid));
                         //    return
                         //}
-                        &ProcessError::ExitCode(0) => {
+                        ProcessError::ExitCode(0) => {
                             // check for fast restart
                             let now = Instant::now();
                             if now.duration_since(self.started) > Duration::new(10, 0) {
@@ -423,7 +415,7 @@ impl Worker {
                 // new process died, need to restart
                 if process.pid == pid {
                     // can not boot worker, restore old process
-                    match err {
+                    match *err {
                         //&ProcessError::InitFailed | &ProcessError::BootFailed => {
                         //    error!("Can not start worker (pid:{}), restoring old worker",
                         //           process.pid);
@@ -434,7 +426,7 @@ impl Worker {
                         //    self.state = WorkerState::Running(old_proc);
                         //    return
                         //}
-                        &ProcessError::ExitCode(0) => {
+                        ProcessError::ExitCode(0) => {
                             // check for fast restart
                             let now = Instant::now();
                             if now.duration_since(self.started) > Duration::new(3, 0) {
@@ -453,7 +445,7 @@ impl Worker {
                     if self.restarts < self.cfg.restarts {
                         // start new worker
                         let (pid, addr) = Process::start(self.idx, &self.cfg, self.addr.clone());
-                        let info = ProcessInfo{pid: pid, addr: addr};
+                        let info = ProcessInfo{pid, addr};
                         self.state = WorkerState::Reloading(info, old_proc);
                     } else {
                         error!("Can not start worker (pid:{}), restoring old worker",
@@ -478,7 +470,7 @@ impl Worker {
                 // new process died, need to restart
                 if process.pid == pid {
                     // can not boot worker, restore old process
-                    match err {
+                    match *err {
                         //&ProcessError::InitFailed | &ProcessError::BootFailed => {
                         //    error!("Can not start worker (pid:{}), restoring old worker",
                         //           process.pid);
@@ -489,7 +481,7 @@ impl Worker {
                         //    self.state = WorkerState::Running(old_proc);
                         //    return
                         //},
-                        &ProcessError::ExitCode(0) => {
+                        ProcessError::ExitCode(0) => {
                             // check for fast restart
                             let now = Instant::now();
                             if now.duration_since(self.started) > Duration::new(3, 0) {
@@ -510,7 +502,7 @@ impl Worker {
                         // start new worker
                         let (pid, addr) = Process::start(
                             self.idx, &self.cfg, self.addr.clone());
-                        let info = ProcessInfo{pid: pid, addr: addr};
+                        let info = ProcessInfo{pid, addr};
                         self.state = WorkerState::Restarting(info, old_proc);
                     } else {
                         error!("Can not start worker (pid:{}), restoring old worker",

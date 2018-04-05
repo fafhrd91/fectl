@@ -47,13 +47,13 @@ impl Socket {
         let _ = fcntl(fd, FcntlArg::F_SETFD(flags));
 
         Socket {
-            name: name.clone(),
-            listener: listener,
-            info: info,
+            name,
+            listener,
+            info,
         }
     }
 
-    pub fn load_config(cfg: &Vec<SocketConfig>) -> Result<Vec<Socket>, std::io::Error>
+    pub fn load_config(cfg: &[SocketConfig]) -> Result<Vec<Socket>, std::io::Error>
     {
         let mut services = Vec::new();
 
@@ -101,7 +101,7 @@ impl Socket {
 
                 match builder.bind(addr.sockaddr) {
                     Ok(_) => {
-                        if let Ok(lst) = builder.listen(sock.backlog as i32) {
+                        if let Ok(lst) = builder.listen(i32::from(sock.backlog)) {
                             info!("Init listener on {:?}", addr.sockaddr);
                             let mut addr = addr.clone();
                             addr.sockaddr = lst.local_addr().expect("should not fail");

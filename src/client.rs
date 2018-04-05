@@ -90,7 +90,7 @@ pub fn is_alive(cfg: &MasterConfig) -> AliveStatus {
             conn.set_read_timeout(Some(Duration::new(1, 0))).expect("Couldn't set read timeout");
             let _ = send_command(&mut conn, MasterRequest::Ping);
 
-            if let Ok(_) = try_read_response(&mut conn, &mut BytesMut::new()) {
+            if try_read_response(&mut conn, &mut BytesMut::new()).is_ok() {
                 AliveStatus::Alive
             } else {
                 AliveStatus::NotResponding

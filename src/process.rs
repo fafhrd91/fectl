@@ -25,9 +25,9 @@ use exec::exec_worker;
 use service::{self, FeService};
 
 const HEARTBEAT: u64 = 2;
-const WORKER_TIMEOUT: i8 = 98;
-pub const WORKER_INIT_FAILED: i8 = 99;
-pub const WORKER_BOOT_FAILED: i8 = 100;
+const WORKER_TIMEOUT: i32 = 98;
+pub const WORKER_INIT_FAILED: i32 = 99;
+pub const WORKER_BOOT_FAILED: i32 = 100;
 
 pub struct Process {
     idx: usize,
@@ -103,11 +103,11 @@ pub enum ProcessError {
 
 impl ProcessError {
     pub fn from(code: i8) -> ProcessError {
-        match code {
+        match code as i32 {
             WORKER_TIMEOUT => ProcessError::StartupTimeout,
             WORKER_INIT_FAILED => ProcessError::InitFailed,
             WORKER_BOOT_FAILED => ProcessError::BootFailed,
-            code => ProcessError::ExitCode(code),
+            code => ProcessError::ExitCode(code as i8),
         }
     }
 }
@@ -115,18 +115,18 @@ impl ProcessError {
 impl<'a> std::convert::From<&'a ProcessError> for Reason
 {
     fn from(ob: &'a ProcessError) -> Self {
-        match ob {
-            &ProcessError::Heartbeat => Reason::HeartbeatFailed,
-            &ProcessError::FailedToStart(ref err) =>
+        match *ob {
+            ProcessError::Heartbeat => Reason::HeartbeatFailed,
+            ProcessError::FailedToStart(ref err) =>
                 Reason::FailedToStart(
-                    if let &Some(ref e) = err { Some(format!("{}", e))} else {None}),
-            &ProcessError::StartupTimeout => Reason::StartupTimeout,
-            &ProcessError::StopTimeout => Reason::StopTimeout,
-            &ProcessError::ConfigError(ref err) => Reason::WorkerError(err.clone()),
-            &ProcessError::InitFailed => Reason::InitFailed,
-            &ProcessError::BootFailed => Reason::BootFailed,
-            &ProcessError::Signal(sig) => Reason::Signal(sig),
-            &ProcessError::ExitCode(code) => Reason::ExitCode(code),
+                    if let Some(ref e) = err { Some(format!("{}", e))} else {None}),
+            ProcessError::StartupTimeout => Reason::StartupTimeout,
+            ProcessError::StopTimeout => Reason::StopTimeout,
+            ProcessError::ConfigError(ref err) => Reason::WorkerError(err.clone()),
+            ProcessError::InitFailed => Reason::InitFailed,
+            ProcessError::BootFailed => Reason::BootFailed,
+            ProcessError::Signal(sig) => Reason::Signal(sig),
+            ProcessError::ExitCode(code) => Reason::ExitCode(code),
         }
     }
 }
@@ -151,9 +151,9 @@ impl Process {
             }
         };
 
-        let timeout = Duration::new(cfg.timeout as u64, 0);
-        let startup_timeout = cfg.startup_timeout as u64;
-        let shutdown_timeout = cfg.shutdown_timeout as u64;
+        let timeout = Duration::new(u64::from(cfg.timeout), 0);
+        let startup_timeout = u64::from(cfg.startup_timeout);
+        let shutdown_timeout = u64::from(cfg.shutdown_timeout);
 
         // start Process service
         let addr = Process::create(move |ctx| {
@@ -162,14 +162,9 @@ impl Process {
             ctx.notify_later(ProcessMessage::StartupTimeout,
                              Duration::new(startup_timeout as u64, 0));
             Process {
-                idx: idx,
-                pid: pid,
+                idx, pid, addr, timeout, startup_timeout, shutdown_timeout,
                 state: ProcessState::Starting,
                 hb: Instant::now(),
-                addr: addr,
-                timeout: timeout,
-                startup_timeout: startup_timeout,
-                shutdown_timeout: shutdown_timeout,
                 framed: actix::io::FramedWrite::new(w, TransportCodec, ctx)
             }});
         (pid, Some(addr))
@@ -294,35 +289,29 @@ impl Handler<ProcessMessage> for Process {
                 }
             }
             ProcessMessage::StartupTimeout => {
-                match self.state {
-                    ProcessState::Starting => {
-                        error!("Worker startup timeout after {} secs", self.startup_timeout);
-                        self.addr.do_send(
-                            service::ProcessFailed(
-                                self.idx, self.pid, ProcessError::StartupTimeout));
+                if let ProcessState::Starting = self.state {
+                    error!("Worker startup timeout after {} secs", self.startup_timeout);
+                    self.addr.do_send(
+                        service::ProcessFailed(
+                            self.idx, self.pid, ProcessError::StartupTimeout));
 
-                        self.state = ProcessState::Failed;
-                        let _ = kill(self.pid, Signal::SIGKILL);
-                        ctx.stop();
-                        return
-                    },
-                    _ => ()
+                    self.state = ProcessState::Failed;
+                    let _ = kill(self.pid, Signal::SIGKILL);
+                    ctx.stop();
+                    return
                 }
             }
             ProcessMessage::StopTimeout => {
-                match self.state {
-                    ProcessState::Stopping => {
-                        info!("Worker shutdown timeout aftre {} secs", self.shutdown_timeout);
-                        self.addr.do_send(
-                            service::ProcessFailed(
-                                self.idx, self.pid, ProcessError::StopTimeout));
+                if let ProcessState::Stopping = self.state {
+                    info!("Worker shutdown timeout aftre {} secs", self.shutdown_timeout);
+                    self.addr.do_send(
+                        service::ProcessFailed(
+                            self.idx, self.pid, ProcessError::StopTimeout));
 
-                        self.state = ProcessState::Failed;
-                        let _ = kill(self.pid, Signal::SIGKILL);
-                        ctx.stop();
-                        return
-                    },
-                    _ => ()
+                    self.state = ProcessState::Failed;
+                    let _ = kill(self.pid, Signal::SIGKILL);
+                    ctx.stop();
+                    return
                 }
             }
             ProcessMessage::Heartbeat => {

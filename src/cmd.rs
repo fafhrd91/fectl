@@ -48,7 +48,7 @@ impl CommandCenter {
 
     pub fn start(cfg: Rc<Config>) -> Addr<Unsync, CommandCenter> {
         CommandCenter {
-            cfg: cfg,
+            cfg,
             state: State::Starting,
             system: Arbiter::system(),
             services: HashMap::new(),
@@ -398,7 +398,7 @@ impl Handler<signal::Signal> for CommandCenter {
                             let err = ProcessError::from(code);
                             for srv in self.services.values_mut() {
                                 srv.do_send(
-                                    service::ProcessExited(pid.clone(), err.clone())
+                                    service::ProcessExited(pid, err.clone())
                                 );
                             }
                             continue
@@ -408,7 +408,7 @@ impl Handler<signal::Signal> for CommandCenter {
                             let err = ProcessError::Signal(sig as usize);
                             for srv in self.services.values_mut() {
                                 srv.do_send(
-                                    service::ProcessExited(pid.clone(), err.clone())
+                                    service::ProcessExited(pid, err.clone())
                                 );
                             }
                             continue
@@ -437,7 +437,7 @@ impl Actor for CommandCenter {
             .do_send(signal::Subscribe(addr.recipient()));
 
         // start services
-        for cfg in self.cfg.services.iter() {
+        for cfg in &self.cfg.services {
             let service = FeService::start(cfg.num, cfg.clone());
             self.services.insert(cfg.name.clone(), service);
         }

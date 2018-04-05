@@ -55,9 +55,9 @@ impl Event {
 
     pub fn new(state: State, reason: Reason, pid: Option<String>) -> Event {
         Event {
-            state: state,
-            reason: reason,
-            pid: pid,
+            state,
+            reason,
+            pid,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
         }
     }
@@ -72,7 +72,7 @@ pub struct Events {
 impl Events {
     /// Create new `Events`
     pub fn new(max: usize) -> Events {
-        Events { max: max, events: VecDeque::new() }
+        Events { max, events: VecDeque::new() }
     }
 
     /// Add new event

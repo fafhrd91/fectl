@@ -95,7 +95,7 @@ impl FeService {
                 name: cfg.name.clone(),
                 state: ServiceState::Starting(actix::Condition::default()),
                 paused: false,
-                workers: workers}
+                workers}
         })
     }
 
@@ -103,7 +103,7 @@ impl FeService {
         let mut in_process = false;
         let mut failed = false;
 
-        for worker in self.workers.iter_mut() {
+        for worker in &mut self.workers {
             if worker.is_failed() {
                 failed = true;
             }
@@ -132,7 +132,7 @@ impl FeService {
                 // if we have failed workers, stop all and change service state to failed
                 if failed {
                     if in_process {
-                        for worker in self.workers.iter_mut() {
+                        for worker in &mut self.workers {
                             if !(worker.is_stopped() || worker.is_failed()) {
                                 worker.stop(Reason::SomeWorkersFailed)
                             }
@@ -157,7 +157,7 @@ impl FeService {
                 // if we have failed workers, stop all and change service state to failed
                 if failed {
                     if in_process {
-                        for worker in self.workers.iter_mut() {
+                        for worker in &mut self.workers {
                             if !(worker.is_stopped() || worker.is_failed()) {
                                 worker.stop(Reason::SomeWorkersFailed)
                             }
@@ -191,7 +191,7 @@ impl FeService {
     }
 
     fn message(&mut self, pid: Pid, message: WorkerMessage) {
-        for worker in self.workers.iter_mut() {
+        for worker in &mut self.workers {
             worker.message(pid, &message)
         }
     }
@@ -205,7 +205,7 @@ impl Actor for FeService {
 
     fn started(&mut self, _: &mut Context<Self>) {
         // start workers
-        for worker in self.workers.iter_mut() {
+        for worker in &mut self.workers {
             worker.start(Reason::Initial);
         }
     }
@@ -257,7 +257,7 @@ impl Handler<ProcessExited> for FeService {
     type Result = ();
 
     fn handle(&mut self, msg: ProcessExited, _: &mut Context<Self>) {
-        for worker in self.workers.iter_mut() {
+        for worker in &mut self.workers {
             worker.exited(msg.0, &msg.1);
         }
         self.update();
@@ -276,7 +276,7 @@ impl Handler<Pids> for FeService {
 
     fn handle(&mut self, _: Pids, _: &mut Context<Self>) -> Self::Result {
         let mut pids = Vec::new();
-        for worker in self.workers.iter() {
+        for worker in &self.workers {
             if let Some(pid) = worker.pid() {
                 pids.push(format!("{}", pid));
             }
@@ -297,7 +297,7 @@ impl Handler<Status> for FeService {
 
     fn handle(&mut self, _: Status, _: &mut Context<Self>) -> Self::Result {
         let mut events: Vec<(String, Vec<Event>)> = Vec::new();
-        for worker in self.workers.iter() {
+        for worker in &self.workers {
             events.push(
                 (format!("worker({})", worker.idx + 1), Vec::from(&worker.events)));
         }
@@ -332,7 +332,7 @@ impl Handler<Start> for FeService {
                 let rx = task.wait();
                 self.paused = false;
                 self.state = ServiceState::Starting(task);
-                for worker in self.workers.iter_mut() {
+                for worker in &mut self.workers {
                     worker.start(Reason::ConsoleRequest);
                 }
                 Response::async(rx.map_err(|_| ServiceOperationError::Failed))
@@ -357,7 +357,7 @@ impl Handler<Pause> for FeService {
         match self.state {
             ServiceState::Running => {
                 debug!("Pause service: {:?}", self.name);
-                for worker in self.workers.iter_mut() {
+                for worker in &mut self.workers {
                     worker.pause(Reason::ConsoleRequest);
                 }
                 self.paused = true;
@@ -382,7 +382,7 @@ impl Handler<Resume> for FeService {
         match self.state {
             ServiceState::Running => {
                 debug!("Resume service: {:?}", self.name);
-                for worker in self.workers.iter_mut() {
+                for worker in &mut self.workers {
                     worker.resume(Reason::ConsoleRequest);
                 }
                 self.paused = false;
@@ -414,7 +414,7 @@ impl Handler<Reload> for FeService {
                 let rx = task.wait();
                 self.paused = false;
                 self.state = ServiceState::Reloading(task);
-                for worker in self.workers.iter_mut() {
+                for worker in &mut self.workers {
                     worker.reload(msg.0, Reason::ConsoleRequest);
                 }
                 Response::async(rx.map_err(|_| ServiceOperationError::Failed))
@@ -461,7 +461,7 @@ impl Handler<Stop> for FeService {
         let rx = task.wait();
         self.paused = false;
         self.state = ServiceState::Stopping(task);
-        for worker in self.workers.iter_mut() {
+        for worker in &mut self.workers {
             if msg.0 {
                 worker.stop(msg.1.clone());
             } else {

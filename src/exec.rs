@@ -87,7 +87,7 @@ pub fn exec_worker(idx: usize, cfg: &ServiceConfig, read: RawFd, write: RawFd) {
     // prepare command and arguments
     let mut iter = cfg.command.split_whitespace();
     let path = if let Some(path) = iter.next() {
-        if let Some(path) = utils::find_path(&path) {
+        if let Some(path) = utils::find_path(path) {
             path
         } else {
             error!("Can not find executable");

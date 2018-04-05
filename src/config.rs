@@ -65,7 +65,7 @@ impl MasterConfig
         if let Some(ref pid) = self.pid {
             if let Ok(mut file) = std::fs::File::open(pid) {
                 let mut buf = Vec::new();
-                if let Ok(_) = file.read_to_end(&mut buf) {
+                if file.read_to_end(&mut buf).is_ok() {
                     let spid = String::from_utf8_lossy(buf.as_ref());
                     if let Ok(pid) = spid.parse::<i32>() {
                         return Some(nix::unistd::Pid::from_raw(pid))
@@ -324,12 +324,12 @@ pub fn load_config() -> Option<Config> {
         // canonizalize socket path
         sock: Path::new(&directory).join(&toml_master.sock).into_os_string(),
 
-        pid: pid,
+        pid,
         gid: toml_master.gid,
         uid: toml_master.uid,
 
         // check if working directory exists
-        directory: directory,
+        directory,
 
         // redirect stdout/stdout to specifi files
         stdout: toml_master.stdout,
@@ -346,8 +346,8 @@ pub fn load_config() -> Option<Config> {
     };
 
     Some(Config {
-        master: master,
-        sockets: sockets,
+        master,
+        sockets,
         services: cfg.service,
         logging: cfg.logging.unwrap_or(LoggingConfig::default()),
     })

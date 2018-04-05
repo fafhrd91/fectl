@@ -51,7 +51,7 @@ impl StreamHandler<NetStream, io::Error> for Master {
             ctx.add_stream(FramedRead::new(r, MasterTransportCodec));
 
             MasterClient{
-                cmd: cmd,
+                cmd,
                 framed: actix::io::FramedWrite::new(w, MasterTransportCodec, ctx)}
         })
     }
@@ -100,7 +100,7 @@ impl MasterClient {
     }
 
     fn handle_error(&mut self, err: CommandError, _: &mut Context<Self>) {
-        let _ = match err {
+        match err {
             CommandError::NotReady =>
                 self.framed.write(MasterResponse::ErrorNotReady),
             CommandError::UnknownService =>
@@ -155,7 +155,7 @@ impl MasterClient {
                     Err(_) => (),
                     Ok(Err(err)) => srv.handle_error(err, ctx),
                     Ok(Ok(res)) => {
-                        let _ = match res {
+                        match res {
                             ReloadStatus::Success =>
                                 srv.framed.write(MasterResponse::ServiceStarted),
                             ReloadStatus::Failed =>
@@ -179,7 +179,7 @@ impl MasterClient {
                     Err(_) => (),
                     Ok(Err(err)) => srv.handle_error(err, ctx),
                     Ok(Ok(res)) => {
-                        let _ = match res {
+                        match res {
                             StartStatus::Success =>
                                 srv.framed.write(MasterResponse::ServiceStarted),
                             StartStatus::Failed =>
@@ -490,11 +490,11 @@ pub fn start(cfg: Config) -> bool {
     // start uds master server
     let _: () = Master::create(|ctx| {
         ctx.add_stream(lst.incoming().map(|(s, a)| NetStream(s, a)));
-        Master{cfg: cfg, cmd: cmd}}
+        Master{cfg, cmd}}
     );
 
     if !daemon {
-        println!("");
+        println!();
     }
     true
 }
