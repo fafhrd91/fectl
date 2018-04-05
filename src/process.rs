@@ -119,7 +119,7 @@ impl<'a> std::convert::From<&'a ProcessError> for Reason
             ProcessError::Heartbeat => Reason::HeartbeatFailed,
             ProcessError::FailedToStart(ref err) =>
                 Reason::FailedToStart(
-                    if let Some(ref e) = err { Some(format!("{}", e))} else {None}),
+                    if let &Some(ref e) = err { Some(format!("{}", e))} else {None}),
             ProcessError::StartupTimeout => Reason::StartupTimeout,
             ProcessError::StopTimeout => Reason::StopTimeout,
             ProcessError::ConfigError(ref err) => Reason::WorkerError(err.clone()),
