@@ -141,7 +141,7 @@ allowable configuration values are as follows.
 ``proto``
 
   Socket protocol to use. Three options are available *tcp4* - ipv4,
-  *tcp6* - ipv7, *unix" - unix domain socket path.
+  *tcp6* - ipv6, *unix" - unix domain socket path.
 
   *Default*: tcp4
 
