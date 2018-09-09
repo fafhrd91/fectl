@@ -2,19 +2,18 @@
 use std;
 use std::ffi::CString;
 use std::io::{Read, Write};
-use std::os::unix::io::{RawFd, AsRawFd, FromRawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 
-use libc;
-use bytes::{BytesMut, Buf, BufMut, IntoBuf};
 use byteorder::BigEndian;
+use bytes::{Buf, BufMut, BytesMut, IntoBuf};
+use libc;
+use nix::unistd::{chdir, dup2, execve, setgid, setuid};
 use serde_json as json;
-use nix::unistd::{chdir, dup2, execve, setuid, setgid};
 
+use config::ServiceConfig;
+use process::{WORKER_BOOT_FAILED, WORKER_INIT_FAILED};
 use utils;
 use worker::{WorkerCommand, WorkerMessage};
-use config::ServiceConfig;
-use process::{WORKER_INIT_FAILED, WORKER_BOOT_FAILED};
-
 
 fn send_msg(file: &mut std::fs::File, msg: WorkerMessage) {
     let msg = json::to_string(&msg).unwrap();
@@ -31,19 +30,19 @@ fn send_msg(file: &mut std::fs::File, msg: WorkerMessage) {
 
 pub fn exec_worker(idx: usize, cfg: &ServiceConfig, read: RawFd, write: RawFd) {
     // notify master
-    let mut file = unsafe{ std::fs::File::from_raw_fd(write) };
+    let mut file = unsafe { std::fs::File::from_raw_fd(write) };
     send_msg(&mut file, WorkerMessage::forked);
 
     // read master response
     let mut buffer = [0; 2];
-    let mut file = unsafe{ std::fs::File::from_raw_fd(read) };
+    let mut file = unsafe { std::fs::File::from_raw_fd(read) };
     if let Err(err) = file.read_exact(&mut buffer) {
         error!("Failed to read master response: {}", err);
         std::process::exit(WORKER_INIT_FAILED as i32);
     }
     let size = buffer.into_buf().get_u16::<BigEndian>();
     let mut buffer = Vec::with_capacity(size as usize);
-    unsafe {buffer.set_len(size as usize)};
+    unsafe { buffer.set_len(size as usize) };
     if let Err(err) = file.read_exact(&mut buffer) {
         error!("Failed to read master response: {}", err);
         std::process::exit(WORKER_INIT_FAILED as i32);
@@ -60,8 +59,10 @@ pub fn exec_worker(idx: usize, cfg: &ServiceConfig, read: RawFd, write: RawFd) {
     if let Some(ref dir) = cfg.directory {
         if let Err(err) = chdir::<str>(dir.as_ref()) {
             error!("Can not change directory {:?} err: {:?}", dir, err);
-            send_msg(&mut file, WorkerMessage::cfgerror(
-                format!("Can not change directory to {}", dir)));
+            send_msg(
+                &mut file,
+                WorkerMessage::cfgerror(format!("Can not change directory to {}", dir)),
+            );
             std::process::exit(WORKER_INIT_FAILED as i32);
         }
     }
@@ -69,8 +70,10 @@ pub fn exec_worker(idx: usize, cfg: &ServiceConfig, read: RawFd, write: RawFd) {
     // set uid
     if let Some(uid) = cfg.uid {
         if let Err(err) = setuid(uid) {
-            send_msg(&mut file, WorkerMessage::cfgerror(
-                format!("Can not set worker uid, err: {}", err)));
+            send_msg(
+                &mut file,
+                WorkerMessage::cfgerror(format!("Can not set worker uid, err: {}", err)),
+            );
             std::process::exit(WORKER_INIT_FAILED as i32);
         }
     }
@@ -78,8 +81,10 @@ pub fn exec_worker(idx: usize, cfg: &ServiceConfig, read: RawFd, write: RawFd) {
     // set gid
     if let Some(gid) = cfg.gid {
         if let Err(err) = setgid(gid) {
-            send_msg(&mut file, WorkerMessage::cfgerror(
-                format!("Can not set worker gid, err: {}", err)));
+            send_msg(
+                &mut file,
+                WorkerMessage::cfgerror(format!("Can not set worker gid, err: {}", err)),
+            );
             std::process::exit(WORKER_INIT_FAILED as i32);
         }
     }
@@ -91,14 +96,18 @@ pub fn exec_worker(idx: usize, cfg: &ServiceConfig, read: RawFd, write: RawFd) {
             path
         } else {
             error!("Can not find executable");
-            send_msg(&mut file, WorkerMessage::cfgerror(
-                format!("Can not find executable: {}", path)));
+            send_msg(
+                &mut file,
+                WorkerMessage::cfgerror(format!("Can not find executable: {}", path)),
+            );
             std::process::exit(WORKER_INIT_FAILED as i32);
         }
     } else {
         error!("Can not find executable");
-        send_msg(&mut file, WorkerMessage::cfgerror(
-            "Can not find executable".to_owned()));
+        send_msg(
+            &mut file,
+            WorkerMessage::cfgerror("Can not find executable".to_owned()),
+        );
         std::process::exit(WORKER_INIT_FAILED as i32);
     };
     let mut args: Vec<_> = vec![CString::new(path.as_str()).unwrap()];
@@ -106,29 +115,44 @@ pub fn exec_worker(idx: usize, cfg: &ServiceConfig, read: RawFd, write: RawFd) {
 
     // redirect stdout and stderr
     if let Some(ref stdout) = cfg.stdout {
-        match std::fs::OpenOptions::new().append(true).create(true).open(stdout)
+        match std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(stdout)
         {
             Ok(f) => {
-            let _ = dup2(f.as_raw_fd(), libc::STDOUT_FILENO);
-        }
+                let _ = dup2(f.as_raw_fd(), libc::STDOUT_FILENO);
+            }
             Err(err) => {
-                send_msg(&mut file, WorkerMessage::cfgerror(
-                    format!("Can open stdout file {}: {}", stdout, err)));
+                send_msg(
+                    &mut file,
+                    WorkerMessage::cfgerror(format!(
+                        "Can open stdout file {}: {}",
+                        stdout, err
+                    )),
+                );
                 std::process::exit(WORKER_INIT_FAILED as i32);
             }
         }
     }
 
     if let Some(ref stderr) = cfg.stderr {
-        match std::fs::OpenOptions::new().append(true).create(true).open(stderr)
+        match std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(stderr)
         {
             Ok(f) => {
                 let _ = dup2(f.as_raw_fd(), libc::STDERR_FILENO);
-
-            },
+            }
             Err(err) => {
-                send_msg(&mut file, WorkerMessage::cfgerror(
-                    format!("Can open stderr file {}: {}", stderr, err)));
+                send_msg(
+                    &mut file,
+                    WorkerMessage::cfgerror(format!(
+                        "Can open stderr file {}: {}",
+                        stderr, err
+                    )),
+                );
                 std::process::exit(WORKER_INIT_FAILED as i32);
             }
         }
@@ -143,7 +167,10 @@ pub fn exec_worker(idx: usize, cfg: &ServiceConfig, read: RawFd, write: RawFd) {
     match execve(&CString::new(path).unwrap(), &args, &env) {
         Ok(_) => unreachable!(),
         Err(err) => {
-            error!("Can not execute command: \"{}\" with error: {:?}", cfg.command, err);
+            error!(
+                "Can not execute command: \"{}\" with error: {:?}",
+                cfg.command, err
+            );
             std::process::exit(WORKER_BOOT_FAILED as i32);
         }
     }

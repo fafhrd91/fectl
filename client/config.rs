@@ -1,11 +1,10 @@
-use structopt::StructOpt;
 use client::ClientCommand;
-
+use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
 struct Cli {
     /// Master process unix socket file path
-    #[structopt(long="sock", short="m", default_value="fectld.sock")]
+    #[structopt(long = "sock", short = "m", default_value = "fectld.sock")]
     sock: String,
 
     /// Run command (Supported commands: status, start, reload, restart, stop)
@@ -15,7 +14,6 @@ struct Cli {
     name: Option<String>,
 }
 
-
 pub fn load_config() -> Option<(ClientCommand, String)> {
     // cmd arguments
     let args = Cli::from_args();
@@ -24,24 +22,19 @@ pub fn load_config() -> Option<(ClientCommand, String)> {
 
     // check client args
     match cmd.as_str() {
-        "pid" =>
-            return Some((ClientCommand::Pid, sock)),
-        "quit" =>
-            return Some((ClientCommand::Quit, sock)),
-        "version" =>
-            return Some((ClientCommand::Version, sock)),
-        "version-check" =>
-            return Some((ClientCommand::VersionCheck, sock)),
-        _ => ()
+        "pid" => return Some((ClientCommand::Pid, sock)),
+        "quit" => return Some((ClientCommand::Quit, sock)),
+        "version" => return Some((ClientCommand::Version, sock)),
+        "version-check" => return Some((ClientCommand::VersionCheck, sock)),
+        _ => (),
     }
 
     let name = match args.name {
         None => {
             println!("Service name is required");
-            return None
+            return None;
         }
-        Some(ref name) =>
-            name.clone()
+        Some(ref name) => name.clone(),
     };
 
     let cmd = match cmd.as_str() {
@@ -55,8 +48,8 @@ pub fn load_config() -> Option<(ClientCommand, String)> {
         "resume" => ClientCommand::Resume(name),
         _ => {
             println!("Unknown command: {}", cmd);
-            return None
+            return None;
         }
     };
-    return Some((cmd, sock))
+    return Some((cmd, sock));
 }

@@ -1,17 +1,17 @@
-use std::thread;
 use std::io::{self, Read, Write};
-use std::time::Duration;
 use std::os::unix::net::UnixStream;
+use std::thread;
+use std::time::Duration;
 
-use chrono::prelude::*;
-use serde_json as json;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, BytesMut};
-use tokio_io::codec::{Encoder, Decoder};
+use chrono::prelude::*;
+use serde_json as json;
+use tokio_io::codec::{Decoder, Encoder};
 
-use version::PKG_INFO;
 use event::Reason;
 use master_types::{MasterRequest, MasterResponse};
+use version::PKG_INFO;
 
 /// Console commands
 #[derive(Clone, Debug)]
@@ -31,7 +31,9 @@ pub enum ClientCommand {
 }
 
 /// Send command to master
-pub fn send_command(stream: &mut UnixStream, req: MasterRequest) -> Result<(), io::Error> {
+pub fn send_command(
+    stream: &mut UnixStream, req: MasterRequest,
+) -> Result<(), io::Error> {
     let mut buf = BytesMut::new();
     ClientTransportCodec.encode(req, &mut buf)?;
 
@@ -39,9 +41,9 @@ pub fn send_command(stream: &mut UnixStream, req: MasterRequest) -> Result<(), i
 }
 
 /// read master response
-pub fn read_response(stream: &mut UnixStream, buf: &mut BytesMut)
-                     -> Result<MasterResponse, io::Error>
-{
+pub fn read_response(
+    stream: &mut UnixStream, buf: &mut BytesMut,
+) -> Result<MasterResponse, io::Error> {
     loop {
         buf.reserve(1024);
 
@@ -51,22 +53,22 @@ pub fn read_response(stream: &mut UnixStream, buf: &mut BytesMut)
                     buf.advance_mut(n);
 
                     if let Some(resp) = ClientTransportCodec.decode(buf)? {
-                        return Ok(resp)
+                        return Ok(resp);
                     } else {
                         if n == 0 {
-                            return Err(io::Error::new(io::ErrorKind::Other, "closed"))
+                            return Err(io::Error::new(io::ErrorKind::Other, "closed"));
                         }
                     }
-                },
+                }
                 Err(e) => return Err(e),
             }
         }
     }
 }
 
-fn try_read_response(stream: &mut UnixStream, buf: &mut BytesMut)
-                     -> Result<MasterResponse, io::Error>
-{
+fn try_read_response(
+    stream: &mut UnixStream, buf: &mut BytesMut,
+) -> Result<MasterResponse, io::Error> {
     let mut retry = 5;
     loop {
         match read_response(stream, buf) {
@@ -75,17 +77,16 @@ fn try_read_response(stream: &mut UnixStream, buf: &mut BytesMut)
                 return Ok(resp);
             }
             Err(err) => match err.kind() {
-                io::ErrorKind::TimedOut =>
-                    if retry > 0 {
-                        retry -= 1;
-                        continue
-                    }
+                io::ErrorKind::TimedOut => if retry > 0 {
+                    retry -= 1;
+                    continue;
+                },
                 io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(100));
-                    continue
+                    continue;
                 }
-                _ => return Err(err)
-            }
+                _ => return Err(err),
+            },
         }
     }
 }
@@ -96,35 +97,38 @@ pub fn run(cmd: ClientCommand, sock: &str) -> bool {
     let mut buf = BytesMut::new();
     let mut stream = match UnixStream::connect(&sock) {
         Ok(mut conn) => {
-            conn.set_read_timeout(Some(Duration::new(1, 0))).expect("Couldn't set read timeout");
+            conn.set_read_timeout(Some(Duration::new(1, 0)))
+                .expect("Couldn't set read timeout");
             let _ = send_command(&mut conn, MasterRequest::Ping);
 
             if try_read_response(&mut conn, &mut buf).is_ok() {
                 conn
             } else {
                 error!("Master process is not responding.");
-                return false
+                return false;
             }
         }
         Err(err) => {
             match err.kind() {
                 io::ErrorKind::PermissionDenied => {
                     error!("Can not connect to master. Permission denied. {}", sock);
-                },
+                }
                 _ => {
                     error!("Can not connect to master {}: {}", sock, err);
                 }
             }
-            return false
+            return false;
         }
     };
 
     // Send command
     let res = match cmd.clone() {
-        ClientCommand::Status(name) =>
-            send_command(&mut stream, MasterRequest::Status(name)),
-        ClientCommand::SPid(name) =>
-            send_command(&mut stream, MasterRequest::SPid(name)),
+        ClientCommand::Status(name) => {
+            send_command(&mut stream, MasterRequest::Status(name))
+        }
+        ClientCommand::SPid(name) => {
+            send_command(&mut stream, MasterRequest::SPid(name))
+        }
         ClientCommand::Pause(name) => {
             println!("Pause `{}` service.", name);
             send_command(&mut stream, MasterRequest::Pause(name))
@@ -149,9 +153,7 @@ pub fn run(cmd: ClientCommand, sock: &str) -> bool {
             print!("Stopping `{}` service.", name);
             send_command(&mut stream, MasterRequest::Stop(name))
         }
-        ClientCommand::Pid => {
-            send_command(&mut stream, MasterRequest::Pid)
-        }
+        ClientCommand::Pid => send_command(&mut stream, MasterRequest::Pid),
         ClientCommand::Version | ClientCommand::VersionCheck => {
             send_command(&mut stream, MasterRequest::Version)
         }
@@ -164,7 +166,7 @@ pub fn run(cmd: ClientCommand, sock: &str) -> bool {
 
     if let Err(err) = res {
         error!("Can not send command {:?} error: {}", cmd, err);
-        return false
+        return false;
     }
 
     // read response
@@ -176,25 +178,22 @@ pub fn run(cmd: ClientCommand, sock: &str) -> bool {
             }
             Ok(MasterResponse::Done) => {
                 println!();
-                return true
+                return true;
             }
             Ok(MasterResponse::Pid(pid)) => {
                 println!("{}", pid);
-                return true
+                return true;
             }
-            Ok(MasterResponse::Version(ver)) => {
-                match cmd {
-                    ClientCommand::VersionCheck =>
-                        return ver.ends_with(PKG_INFO.version),
-                    _ => {
-                        println!("{}", ver);
-                        return true
-                    }
+            Ok(MasterResponse::Version(ver)) => match cmd {
+                ClientCommand::VersionCheck => return ver.ends_with(PKG_INFO.version),
+                _ => {
+                    println!("{}", ver);
+                    return true;
                 }
-            }
+            },
             Ok(MasterResponse::ServiceStarted) | Ok(MasterResponse::ServiceStopped) => {
                 println!("done");
-                return true
+                return true;
             }
             Ok(MasterResponse::ServiceStatus(status)) => {
                 println!("Service status: {}", status.0);
@@ -213,43 +212,43 @@ pub fn run(cmd: ClientCommand, sock: &str) -> bool {
                         println!();
                     }
                 }
-                return true
+                return true;
             }
             Ok(MasterResponse::ServiceWorkerPids(pids)) => {
                 for pid in pids {
                     println!("{}", pid);
                 }
-                return true
+                return true;
             }
             Ok(MasterResponse::ServiceFailed) => {
                 println!("failed.");
-                return false
-            },
+                return false;
+            }
             Ok(MasterResponse::ErrorNotReady) => {
                 error!("Service is loading");
-                return false
+                return false;
             }
             Ok(MasterResponse::ErrorUnknownService) => {
                 error!("Service is unknown");
-                return false
+                return false;
             }
             Ok(MasterResponse::ErrorServiceStarting) => {
                 error!("Service is starting");
-                return false
+                return false;
             }
             Ok(MasterResponse::ErrorServiceReloading) => {
                 error!("Service is restarting");
-                return false
+                return false;
             }
             Ok(MasterResponse::ErrorServiceStopping) => {
                 error!("Service is stopping");
-                return false
+                return false;
             }
             Ok(resp) => println!("MSG: {:?}", resp),
             Err(err) => {
                 println!("Error: {:?}", err);
                 error!("Master process is not responding.");
-                return false
+                return false;
             }
         }
     }
@@ -257,12 +256,13 @@ pub fn run(cmd: ClientCommand, sock: &str) -> bool {
 
 pub struct ClientTransportCodec;
 
-impl Encoder for ClientTransportCodec
-{
+impl Encoder for ClientTransportCodec {
     type Item = MasterRequest;
     type Error = io::Error;
 
-    fn encode(&mut self, msg: MasterRequest, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(
+        &mut self, msg: MasterRequest, dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
         let msg = json::to_string(&msg).unwrap();
         let msg_ref: &[u8] = msg.as_ref();
 
@@ -274,15 +274,14 @@ impl Encoder for ClientTransportCodec
     }
 }
 
-impl Decoder for ClientTransportCodec
-{
+impl Decoder for ClientTransportCodec {
     type Item = MasterResponse;
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let size = {
             if src.len() < 2 {
-                return Ok(None)
+                return Ok(None);
             }
             BigEndian::read_u16(src.as_ref()) as usize
         };

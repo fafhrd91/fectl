@@ -1,6 +1,6 @@
 use std;
 use std::collections::VecDeque;
-use std::time::{UNIX_EPOCH, SystemTime};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub type ServiceStatus = (String, Vec<(String, Vec<Event>)>);
 
@@ -52,17 +52,18 @@ pub struct Event {
 }
 
 impl Event {
-
     pub fn new(state: State, reason: Reason, pid: Option<String>) -> Event {
         Event {
             state,
             reason,
             pid,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
         }
     }
 }
-
 
 pub struct Events {
     max: usize,
@@ -72,7 +73,10 @@ pub struct Events {
 impl Events {
     /// Create new `Events`
     pub fn new(max: usize) -> Events {
-        Events { max, events: VecDeque::new() }
+        Events {
+            max,
+            events: VecDeque::new(),
+        }
     }
 
     /// Add new event
@@ -84,9 +88,7 @@ impl Events {
     }
 }
 
-
-impl<'a> std::convert::From<&'a Events> for Vec<Event>
-{
+impl<'a> std::convert::From<&'a Events> for Vec<Event> {
     fn from(ob: &'a Events) -> Self {
         ob.events.iter().cloned().collect()
     }

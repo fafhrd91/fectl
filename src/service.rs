@@ -1,17 +1,17 @@
 #![allow(dead_code)]
 
+use nix::unistd::Pid;
 use std;
 use std::time::Duration;
-use nix::unistd::Pid;
 
 use actix::prelude::*;
 use actix::Response;
 use futures::Future;
 
-use event::{Event, Reason};
 use config::ServiceConfig;
-use worker::{Worker, WorkerMessage};
+use event::{Event, Reason};
 use process::ProcessError;
+use worker::{Worker, WorkerMessage};
 
 /// Service state
 enum ServiceState {
@@ -24,7 +24,6 @@ enum ServiceState {
 }
 
 impl ServiceState {
-
     fn description(&self) -> &'static str {
         match *self {
             ServiceState::Running => "running",
@@ -81,9 +80,7 @@ pub struct FeService {
 }
 
 impl FeService {
-
-    pub fn start(num: u16, cfg: ServiceConfig) -> Addr<Unsync, FeService>
-    {
+    pub fn start(num: u16, cfg: ServiceConfig) -> Addr<Unsync, FeService> {
         FeService::create(move |ctx| {
             // create4 workers
             let mut workers = Vec::new();
@@ -95,7 +92,8 @@ impl FeService {
                 name: cfg.name.clone(),
                 state: ServiceState::Starting(actix::Condition::default()),
                 paused: false,
-                workers}
+                workers,
+            }
         })
     }
 
@@ -106,15 +104,13 @@ impl FeService {
         for worker in &mut self.workers {
             if worker.is_failed() {
                 failed = true;
-            }
-            else if worker.is_stopped() {
+            } else if worker.is_stopped() {
                 if restart_stopped {
                     // strange
                     worker.reload(true, Reason::None);
                     in_process = true;
                 }
-            }
-            else if !worker.is_running() {
+            } else if !worker.is_running() {
                 in_process = true;
             }
         }
@@ -150,7 +146,7 @@ impl FeService {
                         self.state = ServiceState::Starting(task);
                     }
                 }
-            },
+            }
             ServiceState::Reloading(task) => {
                 let (failed, in_process) = self.check_loading_workers(true);
 
@@ -175,7 +171,7 @@ impl FeService {
                         self.state = ServiceState::Reloading(task);
                     }
                 }
-            },
+            }
             ServiceState::Stopping(task) => {
                 let (_, in_process) = self.check_loading_workers(false);
 
@@ -185,7 +181,7 @@ impl FeService {
                 } else {
                     self.state = ServiceState::Stopping(task);
                 }
-            },
+            }
             state => self.state = state,
         }
     }
@@ -195,12 +191,9 @@ impl FeService {
             worker.message(pid, &message)
         }
     }
-
 }
 
-
 impl Actor for FeService {
-
     type Context = Context<Self>;
 
     fn started(&mut self, _: &mut Context<Self>) {
@@ -298,13 +291,19 @@ impl Handler<Status> for FeService {
     fn handle(&mut self, _: Status, _: &mut Context<Self>) -> Self::Result {
         let mut events: Vec<(String, Vec<Event>)> = Vec::new();
         for worker in &self.workers {
-            events.push(
-                (format!("worker({})", worker.idx + 1), Vec::from(&worker.events)));
+            events.push((
+                format!("worker({})", worker.idx + 1),
+                Vec::from(&worker.events),
+            ));
         }
 
         let status = match self.state {
-            ServiceState::Running => if self.paused { "paused" } else { "running" }
-            _ => self.state.description()
+            ServiceState::Running => if self.paused {
+                "paused"
+            } else {
+                "running"
+            },
+            _ => self.state.description(),
         };
         Ok((status.to_owned(), events))
     }
@@ -320,8 +319,7 @@ impl Message for Start {
 impl Handler<Start> for FeService {
     type Result = Response<StartStatus, ServiceOperationError>;
 
-    fn handle(&mut self, _: Start, _: &mut Context<Self>) -> Self::Result
-    {
+    fn handle(&mut self, _: Start, _: &mut Context<Self>) -> Self::Result {
         match self.state {
             ServiceState::Starting(ref mut task) => {
                 Response::async(task.wait().map_err(|_| ServiceOperationError::Failed))
@@ -337,7 +335,7 @@ impl Handler<Start> for FeService {
                 }
                 Response::async(rx.map_err(|_| ServiceOperationError::Failed))
             }
-            _ => Response::reply(Err(self.state.error()))
+            _ => Response::reply(Err(self.state.error())),
         }
     }
 }
@@ -352,8 +350,7 @@ impl Message for Pause {
 impl Handler<Pause> for FeService {
     type Result = Result<(), ServiceOperationError>;
 
-    fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> Self::Result
-    {
+    fn handle(&mut self, _: Pause, _: &mut Context<Self>) -> Self::Result {
         match self.state {
             ServiceState::Running => {
                 debug!("Pause service: {:?}", self.name);
@@ -363,7 +360,7 @@ impl Handler<Pause> for FeService {
                 self.paused = true;
                 Ok(())
             }
-            _ => Err(self.state.error())
+            _ => Err(self.state.error()),
         }
     }
 }
@@ -388,7 +385,7 @@ impl Handler<Resume> for FeService {
                 self.paused = false;
                 Ok(())
             }
-            _ => Err(self.state.error())
+            _ => Err(self.state.error()),
         }
     }
 }
@@ -419,7 +416,7 @@ impl Handler<Reload> for FeService {
                 }
                 Response::async(rx.map_err(|_| ServiceOperationError::Failed))
             }
-            _ => Response::reply(Err(self.state.error()))
+            _ => Response::reply(Err(self.state.error())),
         }
     }
 }
@@ -440,20 +437,20 @@ impl Handler<Stop> for FeService {
         match state {
             ServiceState::Failed | ServiceState::Stopped => {
                 self.state = state;
-                return Response::reply(Err(()))
-            },
+                return Response::reply(Err(()));
+            }
             ServiceState::Stopping(mut task) => {
                 let rx = task.wait();
                 self.state = ServiceState::Stopping(task);
                 return Response::async(rx.map(|_| ()).map_err(|_| ()));
-            },
+            }
             ServiceState::Starting(task) => {
                 task.set(StartStatus::Stopping);
             }
             ServiceState::Reloading(task) => {
                 task.set(ReloadStatus::Stopping);
             }
-            ServiceState::Running => ()
+            ServiceState::Running => (),
         }
 
         // stop workers

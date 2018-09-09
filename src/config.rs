@@ -1,16 +1,16 @@
 use std;
-use std::path::Path;
 use std::error::Error;
-use std::io::prelude::*;
 use std::ffi::OsString;
+use std::io::prelude::*;
+use std::path::Path;
 
 use nix;
 use nix::unistd::{Gid, Uid};
-use toml;
 use structopt::StructOpt;
+use toml;
 
-use socket;
 use config_helpers;
+use socket;
 
 pub struct Config {
     pub master: MasterConfig,
@@ -50,8 +50,7 @@ pub struct MasterConfig {
     pub stderr: Option<String>,
 }
 
-impl MasterConfig
-{
+impl MasterConfig {
     /// remove pid and sock files
     pub fn remove_files(&self) {
         if let Some(ref pid) = self.pid {
@@ -68,7 +67,7 @@ impl MasterConfig
                 if file.read_to_end(&mut buf).is_ok() {
                     let spid = String::from_utf8_lossy(buf.as_ref());
                     if let Ok(pid) = spid.parse::<i32>() {
-                        return Some(nix::unistd::Pid::from_raw(pid))
+                        return Some(nix::unistd::Pid::from_raw(pid));
                     }
                 }
             }
@@ -104,17 +103,16 @@ struct TomlMasterConfig {
     pub directory: Option<String>,
 
     #[serde(default)]
-    #[serde(deserialize_with="config_helpers::deserialize_gid_field")]
+    #[serde(deserialize_with = "config_helpers::deserialize_gid_field")]
     pub gid: Option<Gid>,
 
     #[serde(default)]
-    #[serde(deserialize_with="config_helpers::deserialize_uid_field")]
+    #[serde(deserialize_with = "config_helpers::deserialize_uid_field")]
     pub uid: Option<Uid>,
 
     pub stdout: Option<String>,
     pub stderr: Option<String>,
 }
-
 
 #[derive(Deserialize, Debug, PartialEq)]
 #[allow(non_camel_case_types)]
@@ -163,7 +161,7 @@ pub struct ServiceConfig {
     pub command: String,
 
     /// Number of restarts before marking worker as failed, default 3
-    #[serde(default="config_helpers::default_restarts")]
+    #[serde(default = "config_helpers::default_restarts")]
     pub restarts: u16,
 
     /// Change to specified directory before service worker loading.
@@ -175,7 +173,7 @@ pub struct ServiceConfig {
     /// retrieved with a call to ``libc::getgrnam(value)`` or ``None`` to not
     /// change the worker processes group.
     #[serde(default)]
-    #[serde(deserialize_with="config_helpers::deserialize_gid_field")]
+    #[serde(deserialize_with = "config_helpers::deserialize_gid_field")]
     pub gid: Option<Gid>,
 
     /// Switch worker processes to run as this user.
@@ -184,7 +182,7 @@ pub struct ServiceConfig {
     /// retrieved with a call to ``libc::getpwnam(value)`` or ``None`` to not
     /// change the worker process user.
     #[serde(default)]
-    #[serde(deserialize_with="config_helpers::deserialize_uid_field")]
+    #[serde(deserialize_with = "config_helpers::deserialize_uid_field")]
     pub uid: Option<Uid>,
 
     /// Workers silent for more than this many seconds are killed and restarted.
@@ -193,7 +191,7 @@ pub struct ServiceConfig {
     /// you're sure of the repercussions for sync workers. For the non sync
     /// workers it just means that the worker process is still communicating and
     /// is not tied to the length of time required to handle a single request.
-    #[serde(default="config_helpers::default_timeout")]
+    #[serde(default = "config_helpers::default_timeout")]
     pub timeout: u32,
 
     /// Timeout for worker startup.
@@ -201,7 +199,7 @@ pub struct ServiceConfig {
     /// After start, workers have this much time to report radyness state.
     /// Workers that do not report `loaded` state to master are force killed and
     /// get restarted.
-    #[serde(default="config_helpers::default_startup_timeout")]
+    #[serde(default = "config_helpers::default_startup_timeout")]
     pub startup_timeout: u32,
 
     /// Timeout for graceful workers shutdown.
@@ -209,7 +207,7 @@ pub struct ServiceConfig {
     /// After receiving a restart or stop signal, workers have this much time to finish
     /// serving requests. Workers still alive after the timeout (starting from
     /// the receipt of the restart signal) are force killed.
-    #[serde(default="config_helpers::default_shutdown_timeout")]
+    #[serde(default = "config_helpers::default_shutdown_timeout")]
     pub shutdown_timeout: u32,
 
     /// A path to a file where `fectld` should redirect `stdout` for this service.
@@ -221,7 +219,6 @@ pub struct ServiceConfig {
     ///
     /// By default redirect for stderr is not enabled
     pub stderr: Option<String>,
-
 }
 
 /// Loging configuration
@@ -250,36 +247,37 @@ impl Default for LoggingConfig {
     }
 }
 
-
 /// Command line arguments
 #[derive(StructOpt, Debug)]
 struct Cli {
     /// Sets a custom config file for fectld
-    #[structopt(long="config", short="c", default_value="fectld.toml")]
+    #[structopt(long = "config", short = "c", default_value = "fectld.toml")]
     config: String,
 
     /// Run in background
-    #[structopt(long="daemon", short="d")]
+    #[structopt(long = "daemon", short = "d")]
     daemon: bool,
 }
-
 
 pub fn load_config() -> Option<Config> {
     let args = Cli::from_args();
 
     let mut cfg_str = String::new();
-    if let Err(err) = std::fs::File::open(args.config)
-        .and_then(|mut f| f.read_to_string(&mut cfg_str))
+    if let Err(err) =
+        std::fs::File::open(args.config).and_then(|mut f| f.read_to_string(&mut cfg_str))
     {
-        println!("Can not read configuration file due to: {}", err.description());
-        return None
+        println!(
+            "Can not read configuration file due to: {}",
+            err.description()
+        );
+        return None;
     }
 
     let cfg: TomlConfig = match toml::from_str(&cfg_str) {
         Ok(cfg) => cfg,
         Err(err) => {
             println!("Can not parse config file: {}", err);
-            return None
+            return None;
         }
     };
 
@@ -300,7 +298,7 @@ pub fn load_config() -> Option<Config> {
             Ok(path) => path.into_os_string(),
             Err(err) => {
                 println!("Error accessing working directory: {}", err);
-                return None
+                return None;
             }
         }
     } else {
@@ -322,7 +320,9 @@ pub fn load_config() -> Option<Config> {
         daemon: args.daemon,
 
         // canonizalize socket path
-        sock: Path::new(&directory).join(&toml_master.sock).into_os_string(),
+        sock: Path::new(&directory)
+            .join(&toml_master.sock)
+            .into_os_string(),
 
         pid,
         gid: toml_master.gid,
@@ -341,7 +341,7 @@ pub fn load_config() -> Option<Config> {
         Ok(sockets) => sockets,
         Err(err) => {
             println!("{}", err);
-            return None
+            return None;
         }
     };
 

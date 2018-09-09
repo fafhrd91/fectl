@@ -1,28 +1,28 @@
 #![allow(dead_code)]
 
 use std;
-use std::io;
 use std::error::Error;
+use std::io;
 use std::os::unix::io::RawFd;
 use std::time::{Duration, Instant};
 
-use serde_json as json;
-use byteorder::{ByteOrder, BigEndian};
-use bytes::{BytesMut, BufMut};
-use tokio_io::AsyncRead;
-use tokio_io::io::WriteHalf;
-use tokio_io::codec::{FramedRead, Encoder, Decoder};
+use byteorder::{BigEndian, ByteOrder};
+use bytes::{BufMut, BytesMut};
 use nix::sys::signal::{kill, Signal};
-use nix::unistd::{close, pipe, fork, ForkResult, Pid};
+use nix::unistd::{close, fork, pipe, ForkResult, Pid};
+use serde_json as json;
+use tokio_io::codec::{Decoder, Encoder, FramedRead};
+use tokio_io::io::WriteHalf;
+use tokio_io::AsyncRead;
 
 use actix::prelude::*;
 
 use config::ServiceConfig;
-use io::PipeFile;
-use worker::{WorkerMessage, WorkerCommand};
 use event::Reason;
 use exec::exec_worker;
+use io::PipeFile;
 use service::{self, FeService};
+use worker::{WorkerCommand, WorkerMessage};
 
 const HEARTBEAT: u64 = 2;
 const WORKER_TIMEOUT: i32 = 98;
@@ -51,7 +51,6 @@ impl Actor for Process {
 }
 
 impl StreamHandler<ProcessMessage, io::Error> for Process {
-
     fn finished(&mut self, ctx: &mut Context<Self>) {
         self.kill(ctx, false);
         ctx.stop();
@@ -112,14 +111,17 @@ impl ProcessError {
     }
 }
 
-impl<'a> std::convert::From<&'a ProcessError> for Reason
-{
+impl<'a> std::convert::From<&'a ProcessError> for Reason {
     fn from(ob: &'a ProcessError) -> Self {
         match *ob {
             ProcessError::Heartbeat => Reason::HeartbeatFailed,
-            ProcessError::FailedToStart(ref err) =>
-                Reason::FailedToStart(
-                    if let &Some(ref e) = err { Some(format!("{}", e))} else {None}),
+            ProcessError::FailedToStart(ref err) => {
+                Reason::FailedToStart(if let &Some(ref e) = err {
+                    Some(format!("{}", e))
+                } else {
+                    None
+                })
+            }
             ProcessError::StartupTimeout => Reason::StartupTimeout,
             ProcessError::StopTimeout => Reason::StopTimeout,
             ProcessError::ConfigError(ref err) => Reason::WorkerError(err.clone()),
@@ -131,23 +133,22 @@ impl<'a> std::convert::From<&'a ProcessError> for Reason
     }
 }
 
-
 impl Process {
-
-    pub fn start(idx: usize, cfg: &ServiceConfig, addr: Addr<Unsync, FeService>)
-                 -> (Pid, Option<Addr<Unsync, Process>>)
-    {
+    pub fn start(
+        idx: usize, cfg: &ServiceConfig, addr: Addr<Unsync, FeService>,
+    ) -> (Pid, Option<Addr<Unsync, Process>>) {
         // fork process and esteblish communication
         let (pid, pipe) = match Process::fork(idx, cfg) {
             Ok(res) => res,
             Err(err) => {
                 let pid = Pid::from_raw(-1);
-                addr.do_send(
-                    service::ProcessFailed(
-                        idx, pid,
-                        ProcessError::FailedToStart(Some(format!("{}", err)))));
+                addr.do_send(service::ProcessFailed(
+                    idx,
+                    pid,
+                    ProcessError::FailedToStart(Some(format!("{}", err))),
+                ));
 
-                return (pid, None)
+                return (pid, None);
             }
         };
 
@@ -159,33 +160,40 @@ impl Process {
         let addr = Process::create(move |ctx| {
             let (r, w) = pipe.split();
             ctx.add_stream(FramedRead::new(r, TransportCodec));
-            ctx.notify_later(ProcessMessage::StartupTimeout,
-                             Duration::new(startup_timeout as u64, 0));
+            ctx.notify_later(
+                ProcessMessage::StartupTimeout,
+                Duration::new(startup_timeout as u64, 0),
+            );
             Process {
-                idx, pid, addr, timeout, startup_timeout, shutdown_timeout,
+                idx,
+                pid,
+                addr,
+                timeout,
+                startup_timeout,
+                shutdown_timeout,
                 state: ProcessState::Starting,
                 hb: Instant::now(),
-                framed: actix::io::FramedWrite::new(w, TransportCodec, ctx)
-            }});
+                framed: actix::io::FramedWrite::new(w, TransportCodec, ctx),
+            }
+        });
         (pid, Some(addr))
     }
 
-    fn fork(idx: usize, cfg: &ServiceConfig) -> Result<(Pid, PipeFile), io::Error>
-    {
+    fn fork(idx: usize, cfg: &ServiceConfig) -> Result<(Pid, PipeFile), io::Error> {
         let (p_read, p_write, ch_read, ch_write) = Process::create_pipes()?;
 
         // fork
         let pid = match fork() {
-            Ok(ForkResult::Parent{ child }) => child,
+            Ok(ForkResult::Parent { child }) => child,
             Ok(ForkResult::Child) => {
                 let _ = close(p_write);
                 let _ = close(ch_read);
                 exec_worker(idx, cfg, p_read, ch_write);
                 unreachable!();
-            },
+            }
             Err(err) => {
                 error!("Fork failed: {}", err.description());
-                return Err(io::Error::new(io::ErrorKind::Other, err.description()))
+                return Err(io::Error::new(io::ErrorKind::Other, err.description()));
             }
         };
 
@@ -204,7 +212,9 @@ impl Process {
             Err(err) => {
                 error!("Can not create pipe: {}", err);
                 return Err(io::Error::new(
-                    io::ErrorKind::Other, format!("Can not create pipe: {}", err)))
+                    io::ErrorKind::Other,
+                    format!("Can not create pipe: {}", err),
+                ));
             }
         };
         let (ch_read, ch_write) = match pipe() {
@@ -212,7 +222,9 @@ impl Process {
             Err(err) => {
                 error!("Can not create pipe: {}", err);
                 return Err(io::Error::new(
-                    io::ErrorKind::Other, format!("Can not create pipe: {}", err)))
+                    io::ErrorKind::Other,
+                    format!("Can not create pipe: {}", err),
+                ));
             }
         };
         Ok((p_read, p_write, ch_read, ch_write))
@@ -250,17 +262,22 @@ impl Handler<ProcessMessage> for Process {
                     match self.state {
                         ProcessState::Starting => {
                             debug!("Worker loaded (pid:{})", self.pid);
-                            self.addr.do_send(
-                                service::ProcessLoaded(self.idx, self.pid));
+                            self.addr
+                                .do_send(service::ProcessLoaded(self.idx, self.pid));
 
                             // start heartbeat timer
                             self.state = ProcessState::Running;
                             self.hb = Instant::now();
                             ctx.notify_later(
-                                ProcessMessage::Heartbeat, Duration::new(HEARTBEAT, 0));
-                        },
+                                ProcessMessage::Heartbeat,
+                                Duration::new(HEARTBEAT, 0),
+                            );
+                        }
                         _ => {
-                            warn!("Received `loaded` message from worker (pid:{})", self.pid);
+                            warn!(
+                                "Received `loaded` message from worker (pid:{})",
+                                self.pid
+                            );
                         }
                     }
                 }
@@ -270,48 +287,61 @@ impl Handler<ProcessMessage> for Process {
                 WorkerMessage::reload => {
                     // worker requests reload
                     info!("Worker requests reload (pid:{})", self.pid);
-                    self.addr.do_send(
-                        service::ProcessMessage(
-                            self.idx, self.pid, WorkerMessage::reload));
+                    self.addr.do_send(service::ProcessMessage(
+                        self.idx,
+                        self.pid,
+                        WorkerMessage::reload,
+                    ));
                 }
                 WorkerMessage::restart => {
                     // worker requests reload
                     info!("Worker requests restart (pid:{})", self.pid);
-                    self.addr.do_send(
-                        service::ProcessMessage(
-                            self.idx, self.pid, WorkerMessage::restart));
+                    self.addr.do_send(service::ProcessMessage(
+                        self.idx,
+                        self.pid,
+                        WorkerMessage::restart,
+                    ));
                 }
                 WorkerMessage::cfgerror(msg) => {
                     error!("Worker config error: {} (pid:{})", msg, self.pid);
-                    self.addr.do_send(
-                        service::ProcessFailed(
-                            self.idx, self.pid, ProcessError::ConfigError(msg)));
+                    self.addr.do_send(service::ProcessFailed(
+                        self.idx,
+                        self.pid,
+                        ProcessError::ConfigError(msg),
+                    ));
                 }
-            }
+            },
             ProcessMessage::StartupTimeout => {
                 if let ProcessState::Starting = self.state {
                     error!("Worker startup timeout after {} secs", self.startup_timeout);
-                    self.addr.do_send(
-                        service::ProcessFailed(
-                            self.idx, self.pid, ProcessError::StartupTimeout));
+                    self.addr.do_send(service::ProcessFailed(
+                        self.idx,
+                        self.pid,
+                        ProcessError::StartupTimeout,
+                    ));
 
                     self.state = ProcessState::Failed;
                     let _ = kill(self.pid, Signal::SIGKILL);
                     ctx.stop();
-                    return
+                    return;
                 }
             }
             ProcessMessage::StopTimeout => {
                 if let ProcessState::Stopping = self.state {
-                    info!("Worker shutdown timeout aftre {} secs", self.shutdown_timeout);
-                    self.addr.do_send(
-                        service::ProcessFailed(
-                            self.idx, self.pid, ProcessError::StopTimeout));
+                    info!(
+                        "Worker shutdown timeout aftre {} secs",
+                        self.shutdown_timeout
+                    );
+                    self.addr.do_send(service::ProcessFailed(
+                        self.idx,
+                        self.pid,
+                        ProcessError::StopTimeout,
+                    ));
 
                     self.state = ProcessState::Failed;
                     let _ = kill(self.pid, Signal::SIGKILL);
                     ctx.stop();
-                    return
+                    return;
                 }
             }
             ProcessMessage::Heartbeat => {
@@ -319,23 +349,29 @@ impl Handler<ProcessMessage> for Process {
                 if let ProcessState::Running = self.state {
                     if Instant::now().duration_since(self.hb) > self.timeout {
                         // heartbeat timed out
-                        error!("Worker heartbeat failed (pid:{}) after {:?} secs",
-                               self.pid, self.timeout);
-                        self.addr.do_send(
-                            service::ProcessFailed(
-                                self.idx, self.pid, ProcessError::Heartbeat));
+                        error!(
+                            "Worker heartbeat failed (pid:{}) after {:?} secs",
+                            self.pid, self.timeout
+                        );
+                        self.addr.do_send(service::ProcessFailed(
+                            self.idx,
+                            self.pid,
+                            ProcessError::Heartbeat,
+                        ));
                     } else {
                         // send heartbeat to worker process and reset hearbeat timer
                         self.framed.write(WorkerCommand::hb);
                         ctx.notify_later(
-                            ProcessMessage::Heartbeat, Duration::new(HEARTBEAT, 0));
+                            ProcessMessage::Heartbeat,
+                            Duration::new(HEARTBEAT, 0),
+                        );
                     }
                 }
             }
             ProcessMessage::Kill => {
                 let _ = kill(self.pid, Signal::SIGKILL);
                 ctx.stop();
-                return
+                return;
             }
         }
     }
@@ -391,8 +427,7 @@ pub struct StopProcess;
 impl Handler<StopProcess> for Process {
     type Result = ();
 
-    fn handle(&mut self, _: StopProcess, ctx: &mut Context<Process>)
-    {
+    fn handle(&mut self, _: StopProcess, ctx: &mut Context<Process>) {
         info!("Stopping worker: (pid:{})", self.pid);
         match self.state {
             ProcessState::Running => {
@@ -401,9 +436,10 @@ impl Handler<StopProcess> for Process {
                 self.framed.write(WorkerCommand::stop);
                 ctx.notify_later(
                     ProcessMessage::StopTimeout,
-                    Duration::new(self.shutdown_timeout, 0));
+                    Duration::new(self.shutdown_timeout, 0),
+                );
                 let _ = kill(self.pid, Signal::SIGTERM);
-            },
+            }
             _ => {
                 let _ = kill(self.pid, Signal::SIGQUIT);
                 ctx.terminate();
@@ -439,7 +475,7 @@ impl Decoder for TransportCodec {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let size = {
             if src.len() < 2 {
-                return Ok(None)
+                return Ok(None);
             }
             BigEndian::read_u16(src.as_ref()) as usize
         };
@@ -447,7 +483,9 @@ impl Decoder for TransportCodec {
         if src.len() >= size + 2 {
             src.split_to(2);
             let buf = src.split_to(size);
-            Ok(Some(ProcessMessage::Message(json::from_slice::<WorkerMessage>(&buf)?)))
+            Ok(Some(ProcessMessage::Message(json::from_slice::<
+                WorkerMessage,
+            >(&buf)?)))
         } else {
             Ok(None)
         }
@@ -458,7 +496,9 @@ impl Encoder for TransportCodec {
     type Item = WorkerCommand;
     type Error = io::Error;
 
-    fn encode(&mut self, msg: WorkerCommand, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(
+        &mut self, msg: WorkerCommand, dst: &mut BytesMut,
+    ) -> Result<(), Self::Error> {
         let msg = json::to_string(&msg).unwrap();
         let msg_ref: &[u8] = msg.as_ref();
 

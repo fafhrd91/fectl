@@ -3,7 +3,7 @@ use event::ServiceStatus;
 /// Master command
 #[allow(non_camel_case_types)]
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(tag="cmd", content="data")]
+#[serde(tag = "cmd", content = "data")]
 pub enum MasterRequest {
     /// Ping master process
     Ping,
@@ -34,7 +34,7 @@ pub enum MasterRequest {
 /// Master responses
 #[allow(non_camel_case_types)]
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(tag="cmd", content="data")]
+#[serde(tag = "cmd", content = "data")]
 pub enum MasterResponse {
     Pong,
     Done,

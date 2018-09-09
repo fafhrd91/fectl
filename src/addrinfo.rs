@@ -2,20 +2,19 @@
 #![allow(dead_code)]
 
 use libc;
-use std::mem;
-use std::ffi::{CStr, CString, NulError};
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, Ipv4Addr, Ipv6Addr};
-use std::ptr;
-use std::io;
-use std::fmt;
 use std::error::Error;
+use std::ffi::{CStr, CString, NulError};
+use std::fmt;
+use std::io;
+use std::mem;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::raw::c_int;
+use std::ptr;
 
 pub const AI_PASSIVE: c_int = 0x0001;
 pub const AI_CANONNAME: c_int = 0x0002;
 pub const AI_NUMERICHOST: c_int = 0x0004;
 pub const AI_NUMERICSERV: c_int = 0x0400;
-
 
 #[derive(Copy, Clone, Debug)]
 /// Address family
@@ -31,7 +30,6 @@ pub enum Family {
     /// Some other
     Other(c_int),
 }
-
 
 impl Family {
     pub fn from_int(int: c_int) -> Self {
@@ -55,7 +53,6 @@ impl Family {
     }
 }
 
-
 #[derive(Copy, Clone, Debug)]
 /// Types of Sockets
 pub enum SocketType {
@@ -68,7 +65,6 @@ pub enum SocketType {
     /// Some other
     Other(c_int),
 }
-
 
 impl SocketType {
     pub fn from_int(int: c_int) -> Self {
@@ -90,7 +86,6 @@ impl SocketType {
     }
 }
 
-
 #[derive(Copy, Clone, Debug)]
 /// Socket Protocol
 pub enum Protocol {
@@ -106,7 +101,6 @@ pub enum Protocol {
     UDP,
     Other(c_int),
 }
-
 
 impl Protocol {
     pub fn from_int(int: c_int) -> Self {
@@ -133,7 +127,6 @@ impl Protocol {
     }
 }
 
-
 #[derive(Clone, Debug)]
 pub struct AddrInfo {
     pub flags: c_int,
@@ -145,16 +138,18 @@ pub struct AddrInfo {
 }
 
 impl AddrInfo {
-    pub fn new(flags: c_int, family: Family,
-               socktype: SocketType, protocol: Protocol,
-               addr: SocketAddr, canonname: Option<String>) -> AddrInfo {
+    pub fn new(
+        flags: c_int, family: Family, socktype: SocketType, protocol: Protocol,
+        addr: SocketAddr, canonname: Option<String>,
+    ) -> AddrInfo {
         AddrInfo {
             flags,
             family,
             socktype,
             protocol,
             sockaddr: addr,
-            canonname }
+            canonname,
+        }
     }
 
     unsafe fn from_ptr<'a>(a: *mut libc::addrinfo) -> Result<Self, LookupError> {
@@ -165,47 +160,58 @@ impl AddrInfo {
             family: Family::from_int(addrinfo.ai_family),
             socktype: SocketType::from_int(addrinfo.ai_socktype),
             protocol: Protocol::from_int(addrinfo.ai_protocol),
-            sockaddr:
-                sockaddr_to_addr(
-                    mem::transmute(addrinfo.ai_addr), addrinfo.ai_addrlen as usize)?,
-            canonname: if addrinfo.ai_canonname.is_null() { None } else {
-                Some(CStr::from_ptr(
-                    addrinfo.ai_canonname).to_str().unwrap_or("unset").to_owned()) },
+            sockaddr: sockaddr_to_addr(
+                mem::transmute(addrinfo.ai_addr),
+                addrinfo.ai_addrlen as usize,
+            )?,
+            canonname: if addrinfo.ai_canonname.is_null() {
+                None
+            } else {
+                Some(
+                    CStr::from_ptr(addrinfo.ai_canonname)
+                        .to_str()
+                        .unwrap_or("unset")
+                        .to_owned(),
+                )
+            },
         })
     }
 }
 
-
-fn sockaddr_to_addr(storage: &libc::sockaddr_storage, len: usize) -> io::Result<SocketAddr> {
+fn sockaddr_to_addr(
+    storage: &libc::sockaddr_storage, len: usize,
+) -> io::Result<SocketAddr> {
     match storage.ss_family as c_int {
         libc::AF_INET => {
             assert!(len as usize >= mem::size_of::<libc::sockaddr_in>());
-            Ok(
-                unsafe {
-                    let sock = *(storage as *const _ as *const libc::sockaddr_in);
-                    let ip = &*(&sock.sin_addr as *const libc::in_addr as *const Ipv4Addr);
-                    SocketAddr::V4(SocketAddrV4::new(ip.clone(), u16::from_be(sock.sin_port)))
-                }
-            )
+            Ok(unsafe {
+                let sock = *(storage as *const _ as *const libc::sockaddr_in);
+                let ip = &*(&sock.sin_addr as *const libc::in_addr as *const Ipv4Addr);
+                SocketAddr::V4(SocketAddrV4::new(
+                    ip.clone(),
+                    u16::from_be(sock.sin_port),
+                ))
+            })
         }
         libc::AF_INET6 => {
             assert!(len as usize >= mem::size_of::<libc::sockaddr_in6>());
-            Ok(
-                unsafe {
-                    let sock = *(storage as *const _ as *const libc::sockaddr_in6);
-                    let ip = &*(&sock.sin6_addr as *const libc::in6_addr as *const Ipv6Addr);
-                    SocketAddr::V6(SocketAddrV6::new(
-                        ip.clone(), u16::from_be(sock.sin6_port),
-                        u32::from_be(sock.sin6_flowinfo), 0))
-                }
-            )
+            Ok(unsafe {
+                let sock = *(storage as *const _ as *const libc::sockaddr_in6);
+                let ip = &*(&sock.sin6_addr as *const libc::in6_addr as *const Ipv6Addr);
+                SocketAddr::V6(SocketAddrV6::new(
+                    ip.clone(),
+                    u16::from_be(sock.sin6_port),
+                    u32::from_be(sock.sin6_flowinfo),
+                    0,
+                ))
+            })
         }
-        _ => {
-            Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid argument"))
-        }
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid argument",
+        )),
     }
 }
-
 
 pub struct LookupParams {
     host: Option<String>,
@@ -216,8 +222,10 @@ pub struct LookupParams {
 }
 
 impl LookupParams {
-    pub fn new(host: Option<String>, port: Option<String>,
-               family: c_int, flags: c_int, socktype: SocketType) -> LookupParams {
+    pub fn new(
+        host: Option<String>, port: Option<String>, family: c_int, flags: c_int,
+        socktype: SocketType,
+    ) -> LookupParams {
         LookupParams {
             host,
             port,
@@ -228,17 +236,16 @@ impl LookupParams {
     }
 }
 
-
 pub struct LookupAddrInfo {
     orig: *mut libc::addrinfo,
     cur: *mut libc::addrinfo,
 }
 
-
 /// Lookup a addr info via dns, return an iterator of addr infos.
 pub fn lookup_addrinfo(
-    host: Option<String>, port: Option<String>,
-    family: c_int, flags: c_int, socktype: SocketType) -> Result<LookupAddrInfo, LookupError> {
+    host: Option<String>, port: Option<String>, family: c_int, flags: c_int,
+    socktype: SocketType,
+) -> Result<LookupAddrInfo, LookupError> {
     let mut res = ptr::null_mut();
     let hints = libc::addrinfo {
         ai_flags: flags,
@@ -270,7 +277,10 @@ pub fn lookup_addrinfo(
     unsafe {
         let lres = libc::getaddrinfo(c_host, c_srv, &hints, &mut res);
         match lres {
-            0 => Ok(LookupAddrInfo { orig: res, cur: res }),
+            0 => Ok(LookupAddrInfo {
+                orig: res,
+                cur: res,
+            }),
             _ => Err(LookupError::Generic),
         }
     }
@@ -283,12 +293,12 @@ impl Iterator for LookupAddrInfo {
         unsafe {
             loop {
                 if self.cur.is_null() {
-                    return None
+                    return None;
                 } else {
                     let ret = AddrInfo::from_ptr(self.cur);
                     self.cur = (*self.cur).ai_next as *mut libc::addrinfo;
                     if let Ok(ret) = ret {
-                        return Some(ret)
+                        return Some(ret);
                     }
                 }
             }
@@ -300,11 +310,10 @@ unsafe impl Sync for LookupAddrInfo {}
 unsafe impl Send for LookupAddrInfo {}
 
 impl Drop for LookupAddrInfo {
-    fn drop(&mut self) { 
+    fn drop(&mut self) {
         unsafe { libc::freeaddrinfo(self.orig) }
     }
 }
-
 
 /// Errors that can occur looking up a hostname.
 pub enum LookupError {
@@ -315,9 +324,8 @@ pub enum LookupError {
     /// Other error
     Other(String),
     /// An unspecific error
-    Generic
+    Generic,
 }
-
 
 impl From<io::Error> for LookupError {
     fn from(err: io::Error) -> Self {
@@ -330,8 +338,12 @@ impl From<LookupError> for io::Error {
         match err {
             LookupError::IOError(err) => err,
             LookupError::Other(err_str) => io::Error::new(io::ErrorKind::Other, err_str),
-            LookupError::NulError(_) => io::Error::new(io::ErrorKind::Other, "nil pointer"),
-            LookupError::Generic => io::Error::new(io::ErrorKind::Other, "generic error"),
+            LookupError::NulError(_) => {
+                io::Error::new(io::ErrorKind::Other, "nil pointer")
+            }
+            LookupError::Generic => {
+                io::Error::new(io::ErrorKind::Other, "generic error")
+            }
         }
     }
 }
@@ -361,7 +373,7 @@ impl Error for LookupError {
     fn cause(&self) -> Option<&Error> {
         match *self {
             LookupError::IOError(ref err) => Some(err),
-            _ => None
+            _ => None,
         }
     }
 }

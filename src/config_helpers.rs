@@ -7,7 +7,6 @@ use serde_json as json;
 
 use config::Proto;
 
-
 pub fn default_vec<T>() -> Vec<T> {
     Vec::new()
 }
@@ -42,27 +41,29 @@ pub fn default_shutdown_timeout() -> u32 {
 
 /// Deserialize `gid` field into `Gid`
 pub(crate) fn deserialize_gid_field<'de, D>(de: D) -> Result<Option<Gid>, D::Error>
-    where D: serde::Deserializer<'de>
+where
+    D: serde::Deserializer<'de>,
 {
     let deser_result: json::Value = serde::Deserialize::deserialize(de)?;
     match deser_result {
-        json::Value::String(ref s) =>
-            if let Ok(name) = CString::new(s.as_str()) {
-                unsafe {
-                    let ptr = libc::getgrnam(name.as_ptr());
-                    return if ptr.is_null() {
-                        Err(serde::de::Error::custom("Can not convert group name to group id"))
-                    } else {
-                        Ok(Some(Gid::from_raw((*ptr).gr_gid)))
-                    };
-                }
-            } else {
-                return Err(serde::de::Error::custom("Can not convert to plain string"))
+        json::Value::String(ref s) => if let Ok(name) = CString::new(s.as_str()) {
+            unsafe {
+                let ptr = libc::getgrnam(name.as_ptr());
+                return if ptr.is_null() {
+                    Err(serde::de::Error::custom(
+                        "Can not convert group name to group id",
+                    ))
+                } else {
+                    Ok(Some(Gid::from_raw((*ptr).gr_gid)))
+                };
             }
+        } else {
+            return Err(serde::de::Error::custom("Can not convert to plain string"));
+        },
         json::Value::Number(num) => {
             if let Some(num) = num.as_u64() {
                 if num <= u64::from(u32::max_value()) {
-                    return Ok(Some(Gid::from_raw(num as libc::gid_t)))
+                    return Ok(Some(Gid::from_raw(num as libc::gid_t)));
                 }
             }
         }
@@ -73,23 +74,25 @@ pub(crate) fn deserialize_gid_field<'de, D>(de: D) -> Result<Option<Gid>, D::Err
 
 /// Deserialize `uid` field into `Uid`
 pub fn deserialize_uid_field<'de, D>(de: D) -> Result<Option<Uid>, D::Error>
-    where D: serde::Deserializer<'de>
+where
+    D: serde::Deserializer<'de>,
 {
     let deser_result: json::Value = serde::Deserialize::deserialize(de)?;
     match deser_result {
-        json::Value::String(ref s) =>
-            if let Ok(name) = CString::new(s.as_str()) {
-                unsafe {
-                    let ptr = libc::getpwnam(name.as_ptr());
-                    return if ptr.is_null() {
-                        Err(serde::de::Error::custom("Can not convert user name to user id"))
-                    } else {
-                        Ok(Some(Uid::from_raw((*ptr).pw_uid)))
-                    };
-                }
-            } else {
-                return Err(serde::de::Error::custom("Can not convert to plain string"))
+        json::Value::String(ref s) => if let Ok(name) = CString::new(s.as_str()) {
+            unsafe {
+                let ptr = libc::getpwnam(name.as_ptr());
+                return if ptr.is_null() {
+                    Err(serde::de::Error::custom(
+                        "Can not convert user name to user id",
+                    ))
+                } else {
+                    Ok(Some(Uid::from_raw((*ptr).pw_uid)))
+                };
             }
+        } else {
+            return Err(serde::de::Error::custom("Can not convert to plain string"));
+        },
         json::Value::Number(num) => {
             if let Some(num) = num.as_u64() {
                 if num <= u64::from(u32::max_value()) {

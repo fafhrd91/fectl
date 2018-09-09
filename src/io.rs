@@ -1,15 +1,14 @@
-use std::io;
 use std::fs::File;
+use std::io;
 use std::io::{Read, Write};
-use std::os::unix::io::{IntoRawFd, AsRawFd, FromRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 
+use futures::{Async, Poll};
 use mio;
 use mio::unix::EventedFd;
-use futures::{Poll, Async};
-use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_core::reactor::{Handle, PollEvented};
 use nix::fcntl::{fcntl, FcntlArg, OFlag, O_NONBLOCK};
-
+use tokio_core::reactor::{Handle, PollEvented};
+use tokio_io::{AsyncRead, AsyncWrite};
 
 pub struct PipeFile {
     read: Io,
@@ -21,10 +20,12 @@ pub struct PipeFile {
 impl PipeFile {
     pub fn new(read: RawFd, write: RawFd, handle: &Handle) -> PipeFile {
         PipeFile {
-            read: unsafe{ Io::from_raw_fd(read) },
-            read_poll: PollEvented::new(unsafe{ Io::from_raw_fd(read) }, handle).unwrap(),
-            write: unsafe{ Io::from_raw_fd(write) },
-            write_poll: PollEvented::new(unsafe{ Io::from_raw_fd(write) }, handle).unwrap(),
+            read: unsafe { Io::from_raw_fd(read) },
+            read_poll: PollEvented::new(unsafe { Io::from_raw_fd(read) }, handle)
+                .unwrap(),
+            write: unsafe { Io::from_raw_fd(write) },
+            write_poll: PollEvented::new(unsafe { Io::from_raw_fd(write) }, handle)
+                .unwrap(),
         }
     }
 }
@@ -36,9 +37,9 @@ impl Read for PipeFile {
                 Ok(size) => {
                     self.read_poll.need_read();
                     Ok(size)
-                },
-                Err(err) => Err(err)
-            }
+                }
+                Err(err) => Err(err),
+            },
             Async::NotReady => Err(io::Error::new(io::ErrorKind::WouldBlock, "")),
         }
     }
@@ -51,9 +52,9 @@ impl Write for PipeFile {
                 Ok(size) => {
                     self.read_poll.need_write();
                     Ok(size)
-                },
-                Err(err) => Err(err)
-            }
+                }
+                Err(err) => Err(err),
+            },
             Async::NotReady => Err(io::Error::new(io::ErrorKind::WouldBlock, "")),
         }
     }
@@ -80,17 +81,23 @@ pub struct Io {
 impl Io {
     /// Try to clone the FD
     pub fn try_clone(&self) -> io::Result<Io> {
-        Ok(Io { fd: self.fd.try_clone()? })
+        Ok(Io {
+            fd: self.fd.try_clone()?,
+        })
     }
 }
 
 impl FromRawFd for Io {
     unsafe fn from_raw_fd(fd: RawFd) -> Io {
         let flags = fcntl(fd, FcntlArg::F_GETFL).unwrap();
-        let _ = fcntl(fd, FcntlArg::F_SETFL(
-            OFlag::from_bits_truncate(flags) | O_NONBLOCK));
+        let _ = fcntl(
+            fd,
+            FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags) | O_NONBLOCK),
+        );
 
-        Io { fd: File::from_raw_fd(fd) }
+        Io {
+            fd: File::from_raw_fd(fd),
+        }
     }
 }
 
@@ -107,17 +114,17 @@ impl AsRawFd for Io {
 }
 
 impl mio::Evented for Io {
-    fn register(&self, poll: &mio::Poll,
-                token: mio::Token, interest: mio::Ready,
-                opts: mio::PollOpt) -> io::Result<()>
-    {
+    fn register(
+        &self, poll: &mio::Poll, token: mio::Token, interest: mio::Ready,
+        opts: mio::PollOpt,
+    ) -> io::Result<()> {
         EventedFd(&self.as_raw_fd()).register(poll, token, interest, opts)
     }
 
-    fn reregister(&self, poll: &mio::Poll,
-                  token: mio::Token, interest: mio::Ready,
-                  opts: mio::PollOpt) -> io::Result<()>
-    {
+    fn reregister(
+        &self, poll: &mio::Poll, token: mio::Token, interest: mio::Ready,
+        opts: mio::PollOpt,
+    ) -> io::Result<()> {
         EventedFd(&self.as_raw_fd()).reregister(poll, token, interest, opts)
     }
 
@@ -157,7 +164,6 @@ impl<'a> Write for &'a Io {
         (&self.fd).flush()
     }
 }
-
 
 impl AsyncRead for Io {}
 
