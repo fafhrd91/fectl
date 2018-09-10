@@ -7,55 +7,46 @@ use futures::{Async, Poll};
 use mio;
 use mio::unix::EventedFd;
 use nix::fcntl::{fcntl, FcntlArg, OFlag, O_NONBLOCK};
-use tokio_core::reactor::{Handle, PollEvented};
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncRead;
+use tokio::prelude::*;
+use tokio::reactor::PollEvented2;
 
 pub struct PipeFile {
-    read: Io,
-    read_poll: PollEvented<Io>,
+    read_poll: PollEvented2<Io>,
     write: Io,
-    write_poll: PollEvented<Io>,
+    write_poll: PollEvented2<Io>,
 }
 
 impl PipeFile {
-    pub fn new(read: RawFd, write: RawFd, handle: &Handle) -> PipeFile {
+    pub fn new(read: RawFd, write: RawFd) -> PipeFile {
         PipeFile {
-            read: unsafe { Io::from_raw_fd(read) },
-            read_poll: PollEvented::new(unsafe { Io::from_raw_fd(read) }, handle)
-                .unwrap(),
+            read_poll: PollEvented2::new(unsafe { Io::from_raw_fd(read) }),
             write: unsafe { Io::from_raw_fd(write) },
-            write_poll: PollEvented::new(unsafe { Io::from_raw_fd(write) }, handle)
-                .unwrap(),
+            write_poll: PollEvented2::new(unsafe { Io::from_raw_fd(write) }),
         }
     }
 }
 
 impl Read for PipeFile {
     fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
-        match self.read_poll.poll_read() {
-            Async::Ready(_) => match self.read.read(dst) {
-                Ok(size) => {
-                    self.read_poll.need_read();
-                    Ok(size)
-                }
-                Err(err) => Err(err),
+        match self.read_poll.poll_read(dst) {
+            Ok(r) => match r {
+                Async::Ready(size) => Ok(size),
+                Async::NotReady => Err(io::Error::new(io::ErrorKind::WouldBlock, "")),
             },
-            Async::NotReady => Err(io::Error::new(io::ErrorKind::WouldBlock, "")),
+            Err(_) => Err(io::Error::new(io::ErrorKind::WouldBlock, "")),
         }
     }
 }
 
 impl Write for PipeFile {
     fn write(&mut self, src: &[u8]) -> io::Result<usize> {
-        match self.write_poll.poll_write() {
-            Async::Ready(_) => match self.write.write(src) {
-                Ok(size) => {
-                    self.read_poll.need_write();
-                    Ok(size)
-                }
-                Err(err) => Err(err),
+        match self.write_poll.poll_write(src) {
+            Ok(r) => match r {
+                Async::Ready(size) => Ok(size),
+                Async::NotReady => Err(io::Error::new(io::ErrorKind::WouldBlock, "")),
             },
-            Async::NotReady => Err(io::Error::new(io::ErrorKind::WouldBlock, "")),
+            Err(_) => Err(io::Error::new(io::ErrorKind::WouldBlock, "")),
         }
     }
 

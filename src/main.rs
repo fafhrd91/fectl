@@ -19,9 +19,7 @@ extern crate libc;
 extern crate mio;
 extern crate net2;
 extern crate nix;
-extern crate tokio_core;
-extern crate tokio_io;
-extern crate tokio_uds;
+extern crate tokio;
 extern crate toml;
 
 #[macro_use]

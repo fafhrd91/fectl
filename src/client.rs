@@ -6,7 +6,7 @@ use std::time::Duration;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, BytesMut};
 use serde_json as json;
-use tokio_io::codec::{Decoder, Encoder};
+use tokio::codec::{Decoder, Encoder};
 
 use config::MasterConfig;
 use master_types::{MasterRequest, MasterResponse};
@@ -114,7 +114,7 @@ impl Encoder for ClientTransportCodec {
         let msg_ref: &[u8] = msg.as_ref();
 
         dst.reserve(msg_ref.len() + 2);
-        dst.put_u16::<BigEndian>(msg_ref.len() as u16);
+        dst.put_u16_be(msg_ref.len() as u16);
         dst.put(msg_ref);
 
         Ok(())

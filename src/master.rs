@@ -7,19 +7,17 @@ use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
 
+use actix::prelude::*;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, BytesMut};
 use futures::Stream;
 use libc;
 use nix;
 use serde_json as json;
-use tokio_core::reactor::Timeout;
-use tokio_io::codec::{Decoder, Encoder, FramedRead};
-use tokio_io::io::WriteHalf;
-use tokio_io::AsyncRead;
-use tokio_uds::{UnixListener, UnixStream};
-
-use actix::prelude::*;
+use tokio::codec::{Decoder, Encoder, FramedRead};
+use tokio::io::{WriteHalf, AsyncRead};
+use tokio::net::{UnixListener, UnixStream};
+use tokio::reactor::Handle;
 
 use client;
 use cmd::{self, CommandCenter, CommandError};
@@ -31,7 +29,7 @@ use version::PKG_INFO;
 
 pub struct Master {
     cfg: Rc<Config>,
-    cmd: Addr<Unsync, CommandCenter>,
+    cmd: Addr<CommandCenter>,
 }
 
 impl Actor for Master {
@@ -39,7 +37,7 @@ impl Actor for Master {
 }
 
 #[derive(Message)]
-struct NetStream(UnixStream, std::os::unix::net::SocketAddr);
+struct NetStream(UnixStream);
 
 impl StreamHandler<NetStream, io::Error> for Master {
     fn handle(&mut self, msg: NetStream, _: &mut Context<Self>) {
@@ -53,7 +51,7 @@ impl StreamHandler<NetStream, io::Error> for Master {
                 cmd,
                 framed: actix::io::FramedWrite::new(w, MasterTransportCodec, ctx),
             }
-        })
+        });
     }
 }
 
@@ -64,7 +62,7 @@ impl Drop for Master {
 }
 
 struct MasterClient {
-    cmd: Addr<Unsync, CommandCenter>,
+    cmd: Addr<CommandCenter>,
     framed: actix::io::FramedWrite<WriteHalf<UnixStream>, MasterTransportCodec>,
 }
 
@@ -86,15 +84,9 @@ impl StreamHandler<MasterRequest, io::Error> for MasterClient {
 
 impl MasterClient {
     fn hb(&self, ctx: &mut Context<Self>) {
-        let fut = Timeout::new(Duration::new(1, 0), Arbiter::handle())
-            .unwrap()
-            .actfuture()
-            .then(|_, act: &mut MasterClient, ctx: &mut Context<Self>| {
-                act.framed.write(MasterResponse::Pong);
-                act.hb(ctx);
-                actix::fut::ok(())
-            });
-        ctx.spawn(fut);
+        ctx.run_interval(Duration::new(1, 0), |act, _| {
+            act.framed.write(MasterResponse::Pong);
+        });
     }
 
     fn handle_error(&mut self, err: CommandError, _: &mut Context<Self>) {
@@ -347,7 +339,7 @@ impl Encoder for MasterTransportCodec {
         let msg_ref: &[u8] = msg.as_ref();
 
         dst.reserve(msg_ref.len() + 2);
-        dst.put_u16::<BigEndian>(msg_ref.len() as u16);
+        dst.put_u16_be(msg_ref.len() as u16);
         dst.put(msg_ref);
 
         Ok(())
@@ -391,7 +383,7 @@ pub fn start(cfg: Config) -> bool {
     }
 
     // create commands listener and also check if service process is running
-    let lst = match StdUnixListener::bind(&cfg.master.sock) {
+    let lst: StdUnixListener = match StdUnixListener::bind(&cfg.master.sock) {
         Ok(lst) => lst,
         Err(err) => match err.kind() {
             io::ErrorKind::PermissionDenied => {
@@ -474,24 +466,24 @@ pub fn start(cfg: Config) -> bool {
                 .append(true)
                 .create(true)
                 .open(stdout)
-            {
-                Ok(f) => {
-                    let _ = nix::unistd::dup2(f.as_raw_fd(), libc::STDOUT_FILENO);
+                {
+                    Ok(f) => {
+                        let _ = nix::unistd::dup2(f.as_raw_fd(), libc::STDOUT_FILENO);
+                    }
+                    Err(err) => error!("Can open stdout file {}: {}", stdout, err),
                 }
-                Err(err) => error!("Can open stdout file {}: {}", stdout, err),
-            }
         }
         if let Some(ref stderr) = cfg.master.stderr {
             match std::fs::OpenOptions::new()
                 .append(true)
                 .create(true)
                 .open(stderr)
-            {
-                Ok(f) => {
-                    let _ = nix::unistd::dup2(f.as_raw_fd(), libc::STDERR_FILENO);
+                {
+                    Ok(f) => {
+                        let _ = nix::unistd::dup2(f.as_raw_fd(), libc::STDERR_FILENO);
+                    }
+                    Err(err) => error!("Can open stderr file {}: {}", stderr, err),
                 }
-                Err(err) => error!("Can open stderr file {}: {}", stderr, err),
-            }
         }
 
         // continue start process
@@ -501,7 +493,7 @@ pub fn start(cfg: Config) -> bool {
     let cfg = Rc::new(cfg);
 
     // create uds stream
-    let lst = match UnixListener::from_listener(lst, Arbiter::handle()) {
+    let lst = match UnixListener::from_std(lst, &Handle::default()) {
         Ok(lst) => lst,
         Err(err) => {
             error!("Can not create unix socket listener {:?}", err);
@@ -513,8 +505,8 @@ pub fn start(cfg: Config) -> bool {
     let cmd = CommandCenter::start(cfg.clone());
 
     // start uds master server
-    let _: () = Master::create(|ctx| {
-        ctx.add_stream(lst.incoming().map(|(s, a)| NetStream(s, a)));
+    let _ = Master::create(|ctx| {
+        ctx.add_stream(lst.incoming().map(|s| NetStream(s)));
         Master { cfg, cmd }
     });
 

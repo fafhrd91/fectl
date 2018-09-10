@@ -11,9 +11,8 @@ use bytes::{BufMut, BytesMut};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::{close, fork, pipe, ForkResult, Pid};
 use serde_json as json;
-use tokio_io::codec::{Decoder, Encoder, FramedRead};
-use tokio_io::io::WriteHalf;
-use tokio_io::AsyncRead;
+use tokio::codec::{Decoder, Encoder, FramedRead};
+use tokio::io::{AsyncRead, WriteHalf};
 
 use actix::prelude::*;
 
@@ -34,7 +33,7 @@ pub struct Process {
     pid: Pid,
     state: ProcessState,
     hb: Instant,
-    addr: Addr<Unsync, FeService>,
+    addr: Addr<FeService>,
     timeout: Duration,
     startup_timeout: u64,
     shutdown_timeout: u64,
@@ -51,13 +50,13 @@ impl Actor for Process {
 }
 
 impl StreamHandler<ProcessMessage, io::Error> for Process {
+    fn handle(&mut self, msg: ProcessMessage, ctx: &mut Self::Context) {
+        ctx.notify(msg);
+    }
+
     fn finished(&mut self, ctx: &mut Context<Self>) {
         self.kill(ctx, false);
         ctx.stop();
-    }
-
-    fn handle(&mut self, msg: ProcessMessage, ctx: &mut Self::Context) {
-        ctx.notify(msg);
     }
 }
 
@@ -135,8 +134,8 @@ impl<'a> std::convert::From<&'a ProcessError> for Reason {
 
 impl Process {
     pub fn start(
-        idx: usize, cfg: &ServiceConfig, addr: Addr<Unsync, FeService>,
-    ) -> (Pid, Option<Addr<Unsync, Process>>) {
+        idx: usize, cfg: &ServiceConfig, addr: Addr<FeService>,
+    ) -> (Pid, Option<Addr<Process>>) {
         // fork process and esteblish communication
         let (pid, pipe) = match Process::fork(idx, cfg) {
             Ok(res) => res,
@@ -200,7 +199,7 @@ impl Process {
         // initialize worker communication channel
         let _ = close(p_read);
         let _ = close(ch_write);
-        let pipe = PipeFile::new(ch_read, p_write, Arbiter::handle());
+        let pipe = PipeFile::new(ch_read, p_write);
 
         Ok((pid, pipe))
     }
@@ -503,7 +502,7 @@ impl Encoder for TransportCodec {
         let msg_ref: &[u8] = msg.as_ref();
 
         dst.reserve(msg_ref.len() + 2);
-        dst.put_u16::<BigEndian>(msg_ref.len() as u16);
+        dst.put_u16_be(msg_ref.len() as u16);
         dst.put(msg_ref);
 
         Ok(())

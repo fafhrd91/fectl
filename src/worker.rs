@@ -55,7 +55,7 @@ enum WorkerState {
 
 struct ProcessInfo {
     pid: Pid,
-    addr: Option<Addr<Unsync, Process>>,
+    addr: Option<Addr<Process>>,
 }
 
 impl ProcessInfo {
@@ -94,11 +94,11 @@ pub struct Worker {
     pub restore_from_fail: bool,
     started: Instant,
     restarts: u16,
-    addr: Addr<Unsync, FeService>,
+    addr: Addr<FeService>,
 }
 
 impl Worker {
-    pub fn new(idx: usize, cfg: ServiceConfig, addr: Addr<Unsync, FeService>) -> Worker {
+    pub fn new(idx: usize, cfg: ServiceConfig, addr: Addr<FeService>) -> Worker {
         Worker {
             idx,
             cfg,
@@ -374,7 +374,7 @@ impl Worker {
                     self.state = WorkerState::Starting(process);
                 } else {
                     match *err {
-                        // can not boot worker, fail immidietly
+                        // can not boot worker, fail immediately
                         //&ProcessError::InitFailed | &ProcessError::BootFailed => {
                         //    self.state = WorkerState::Failed;
                         //    self.events.add(State::Failed, Reason::from(err), str(pid));
@@ -419,7 +419,7 @@ impl Worker {
                         //    self.restore_from_fail = true;
                         //    self.events.add(State::ReloadFailed, err.into(), str(pid));
                         //    self.events.add(State::Running,
-                        //                    Reason::RestoreAftreFailed, str(old_proc.pid));
+                        //                    Reason::RestoreAfterFailed, str(old_proc.pid));
                         //    self.state = WorkerState::Running(old_proc);
                         //    return
                         //}
@@ -478,7 +478,7 @@ impl Worker {
                         //    self.restore_from_fail = true;
                         //    self.events.add(State::RestartFailed, err.into(), str(pid));
                         //    self.events.add(State::Running,
-                        //                    Reason::RestoreAftreFailed, str(old_proc.pid));
+                        //                    Reason::RestoreAfterFailed, str(old_proc.pid));
                         //    self.state = WorkerState::Running(old_proc);
                         //    return
                         //},

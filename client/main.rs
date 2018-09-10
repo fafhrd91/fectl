@@ -13,7 +13,7 @@ extern crate structopt_derive;
 extern crate byteorder;
 extern crate bytes;
 extern crate chrono;
-extern crate tokio_io;
+extern crate tokio;
 
 mod client;
 mod config;

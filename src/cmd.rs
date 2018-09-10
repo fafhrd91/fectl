@@ -37,34 +37,28 @@ enum State {
 pub struct CommandCenter {
     cfg: Rc<Config>,
     state: State,
-    system: Addr<Syn, System>,
-    services: HashMap<String, Addr<Unsync, FeService>>,
+    services: HashMap<String, Addr<FeService>>,
     stop_waiter: Option<actix::Condition<bool>>,
     stopping: usize,
 }
 
 impl CommandCenter {
-    pub fn start(cfg: Rc<Config>) -> Addr<Unsync, CommandCenter> {
+    pub fn start(cfg: Rc<Config>) -> Addr<CommandCenter> {
         CommandCenter {
             cfg,
             state: State::Starting,
-            system: Arbiter::system(),
             services: HashMap::new(),
             stop_waiter: None,
             stopping: 0,
         }.start()
     }
 
-    fn exit(&mut self, success: bool) {
+    fn exit(&mut self) {
         if let Some(waiter) = self.stop_waiter.take() {
             waiter.set(true);
         }
 
-        if success {
-            self.system.do_send(actix::msgs::SystemExit(0));
-        } else {
-            self.system.do_send(actix::msgs::SystemExit(1));
-        }
+        System::current().stop();
     }
 
     fn stop(&mut self, ctx: &mut Context<Self>, graceful: bool) {
@@ -81,7 +75,7 @@ impl CommandCenter {
                         srv.stopping -= 1;
                         let exit = srv.stopping == 0;
                         if exit {
-                            srv.exit(true);
+                            srv.exit();
                         }
                         match res {
                             Ok(_) => actix::fut::ok(()),
@@ -431,8 +425,9 @@ impl Actor for CommandCenter {
         info!("Starting ctl service: {}", getpid());
 
         // listen for process signals
-        let addr: Addr<Syn, _> = ctx.address();
-        Arbiter::system_registry()
+        let addr = ctx.address();
+        System::current()
+            .registry()
             .get::<signal::ProcessSignals>()
             .do_send(signal::Subscribe(addr.recipient()));
 
@@ -445,7 +440,7 @@ impl Actor for CommandCenter {
     }
 
     fn stopping(&mut self, _: &mut Context<Self>) -> Running {
-        self.exit(true);
+        self.exit();
         Running::Stop
     }
 }

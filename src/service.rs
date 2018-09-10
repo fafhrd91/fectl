@@ -80,7 +80,7 @@ pub struct FeService {
 }
 
 impl FeService {
-    pub fn start(num: u16, cfg: ServiceConfig) -> Addr<Unsync, FeService> {
+    pub fn start(num: u16, cfg: ServiceConfig) -> Addr<FeService> {
         FeService::create(move |ctx| {
             // create4 workers
             let mut workers = Vec::new();

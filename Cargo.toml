@@ -22,7 +22,7 @@ name = "fectl"
 path = "client/main.rs"
 
 [dependencies]
-actix = "0.5"
+actix = "0.7"
 
 libc = "0.2"
 nix = "0.9"
@@ -33,12 +33,9 @@ boxfnonce = "*"
 
 # tokio
 bytes = "0.4"
-mio = "0.6"
 futures = "0.1"
-tokio-core = "=0.1.12"
-tokio-io = "=0.1.5"
-tokio-signal = "=0.1.5"
-tokio-uds = "=0.1.7"
+mio = "0.6"
+tokio = "0.1"
 
 # logging
 time = "*"
